@@ -18,7 +18,7 @@ class BaseTaskPolicy(ABC):
 
     @abstractmethod
     def on_running(task_id: str) -> None:
-        """Called when task execution begins (not queued anymore)."""
+        """Called when task execution begins (not queued anymore). Runs in worker. Be careful if using ProcessPoolExecutor"""
         pass
 
     @abstractmethod

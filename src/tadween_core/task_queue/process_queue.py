@@ -1,8 +1,6 @@
-# task_queue/process_queue.py
 import logging
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any
 
 from .base_queue import BaseTaskPolicy, BaseTaskQueue
 
@@ -15,27 +13,21 @@ class ProcessTaskQueue(BaseTaskQueue):
         name: str | None = None,
         max_workers: int | None = None,
         default_policy: BaseTaskPolicy | None = None,
+        retain_results: bool = False,
         logger: logging.Logger | None = None,
         initializer: Callable | None = None,
         initargs: tuple = (),
     ):
         super().__init__(
-            name=name, logger=logger, default_policy=default_policy
+            name=name,
+            logger=logger,
+            default_policy=default_policy,
+            retain_results=retain_results,
         )  # CRITICAL: Initialize base class
 
         self.executor = ProcessPoolExecutor(
             max_workers=max_workers, initializer=initializer, initargs=initargs
         )
-
-    def get_result(self, task_id: str, timeout: float | None = None) -> Any:
-        """Get result with process-specific logging."""
-
-        try:
-            result = super().get_result(task_id, timeout)
-            return result
-        except Exception as e:
-            self.logger.error(f"Task {task_id} failed in task queue [{self.name}]: {e}")
-            raise
 
     def close(self, force: bool = False) -> None:
         """Shutdown gracefully."""
@@ -55,8 +47,3 @@ class ProcessTaskQueue(BaseTaskQueue):
             self.executor.shutdown(wait=True)
 
         self.logger.debug(f"Process task queue shutdown complete [{self.name}]")
-
-
-def process_task_queue(max_workers: int | None = None) -> ProcessTaskQueue:
-    """Create a process-based task queue"""
-    return ProcessTaskQueue(max_workers=max_workers)

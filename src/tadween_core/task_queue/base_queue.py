@@ -144,9 +144,9 @@ class BaseTaskQueue(ABC, Generic[T]):
         Yields exceptions as results for failed tasks.
         """
         if not self.retain_results:
-            raise RuntimeError(
-                "stream_completed() requires retain_results=True. "
-                "Use on_done callbacks for non-retained results."
+            self.logger.warning(
+                "stream_completed() requires retain_results=True on either task, or task queue itself. "
+                f"{self.name}.retain_result is set to False. Use on_done callbacks for non-retained results."
             )
         with self._lock:
             future_to_id = {fut: tid for tid, fut in self._tasks.items()}

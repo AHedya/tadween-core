@@ -26,13 +26,3 @@ __all__ = [
     "RoutingError",
     "__version__",
 ]
-
-import logging
-import sys
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    stream=sys.stdout,
-    format="%(asctime)s:[%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-)
