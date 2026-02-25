@@ -4,8 +4,8 @@ from typing import Literal, TypeAlias, get_args, overload
 
 from .base_queue import BaseTaskPolicy, BaseTaskQueue
 from .dynamic import DynamicTaskQueue, ExecutorType
-from .process_queue import ProcessTaskQueue, process_task_queue
-from .thread_queue import ThreadTaskQueue, thread_task_queue
+from .process_queue import ProcessTaskQueue
+from .thread_queue import ThreadTaskQueue
 
 QueueExecutorType: TypeAlias = Literal["thread", "process", "dynamic"]  # noqa: UP040
 valid = ", ".join(get_args(QueueExecutorType))
@@ -117,8 +117,6 @@ __all__ = [
     "BaseTaskQueue",
     "ThreadTaskQueue",
     "ProcessTaskQueue",
-    "thread_task_queue",
-    "process_task_queue",
     "DynamicTaskQueue",
     "ExecutorType",
 ]
