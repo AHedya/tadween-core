@@ -53,6 +53,9 @@ The framework is composed of several independent but integrated modules:
 | **Repository** | Persistence layer for Artifacts. | [docs](src/tadween_core/repo/README.md) |
 | **Artifact** | The core data model moved across the pipeline. | [docs](src/tadween_core/types/artifact/README.md) |
 
+---
+*For detailed implementation details, please refer to the specific component documentation linked above.*
+
 ## Installation & Tests
 
 Ensure you have `uv` installed.
@@ -65,14 +68,12 @@ uv run pytest
 uv run pytest -v -s
 ```
 
----
-*For detailed implementation details, please refer to the specific component documentation linked above.*
-
 ## Batteries Included: The Tadween Preset
 While tadween-core is generic, it provides a high-level "Audio-to-Text" implementation out of the box.
 
 ## The Backstory
-A note from the developer.
+<details>
+<summary>The story of tadween-core</summary>
 
 `Tadween` began as a simple, monolithic end-to-end audio-to-text pipeline. The initial prototype was full of hardcoded bits, no clear standards, and no normalization — so any change felt like walking through a minefield. Building it revealed what a solid system really needs, especially when it must run in different environments: local machines, production servers, serverless platforms, or even distributed setups with many GPUs.
 
@@ -92,3 +93,4 @@ We decided to stop patching the pipeline and start building the engine we actual
 - We abstracted persistence layer into `Repo`s. With built-in implementation for lazy-loading
 - We redesigned the sequential, dependent I/O stream into `StagePolicy.resolve_inputs` in addition to typed caching system.  
 - We redesigned the Artifact to be lazy-loaded and state-aware, moving from a single "God Object" to a modular entity with persistent "Parts."
+</details>
