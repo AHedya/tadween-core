@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+
+.venv
+/data
+/models
+
+.pytest_cache
+# graphs are high-resolution. use notebooks to generate again
+benchmark/results/*.png 
