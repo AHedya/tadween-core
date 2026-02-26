@@ -1,6 +1,8 @@
 # Broker
 
-The `broker` package implements a message bus for inter-stage communication and state notification within Tadween.
+The `broker` subpackage implements a message bus for inter-stage communication and state notification within Tadween.
+
+Typically, message bus should only deliver messages and doesn't do any work. In other words, make handlers return immediately (submit work)
 
 ## Concepts
 
@@ -11,31 +13,31 @@ The `broker` package implements a message bus for inter-stage communication and 
 
 ## Statistics & Monitoring
 
-The `broker` package includes a `StatsCollector` (a `BrokerListener`) to track:
+The `broker` subpackage includes a `StatsCollector` (a `BrokerListener`) to track:
 - Message throughput (published, processed, failed).
 - Queue sizes per topic.
 - Active dispatch threads.
 
+## Anatomy
+The `broker` subpackage anatomy
+
+```
+└── broker
+    ├── __init__.py
+    ├── base.py         => defines broker contract, observer (or listener) contract, data models, and hinting.
+    ├── listeners.py    => Implemented listeners for broker (observer pattern)
+    ├── memory.py       => InMemoryBroker implementation
+    └── README.md
+```
+
 ## Usage Example
 
-```python
-from tadween_core.broker import InMemoryBroker, Message
+*For examples, see [examples/broker.py](../../../examples/broker/README.md)*
 
-broker = InMemoryBroker()
+## InMemoryBroker
 
-# Subscribe to a topic
-def my_handler(msg: Message):
-    print(f"Received message: {msg.payload}")
-
-broker.subscribe("audio.downloaded", my_handler)
-
-# Publish a message
-msg = Message(topic="audio.downloaded", payload={"local_path": "/tmp/audio.mp3"})
-broker.publish(msg)
-
-# Graceful shutdown
-broker.close(timeout=5.0)
-```
+Must be closed after any submissions, lest dispatched threads will hang the main process.
+Make sure to consider settings `timeout` in `broker.close`, unless you want to wait indefinitely and are sure there's no un-acknowledged message, they can hang the broker forever.
 
 ## Observer Pattern
 
@@ -45,6 +47,3 @@ Implement `BrokerListener` to hook into the broker's lifecycle:
 - `on_message_dispatched`: Called when a message is retrieved for processing.
 - `on_message_processed`: Called when a message is successfully processed.
 - `on_message_failed`: Called when processing fails.
-
----
-*For more examples, see [examples/broker.py](../../../examples/broker.py) (if available).*

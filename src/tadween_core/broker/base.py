@@ -1,8 +1,9 @@
+import copy
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated, Literal, Protocol, TypeAlias
+from typing import Annotated, Literal, TypeAlias
 
 
 @dataclass(slots=True)
@@ -19,6 +20,72 @@ class Message:
             self.payload = {}
         if self.metadata is None:
             self.metadata = {}
+
+    def fork(
+        self,
+        topic: str | None = None,
+        payload: dict | None = None,
+        metadata: dict | None = None,
+    ) -> "Message":
+        """
+        Create a deep copy of the message with a new UUID.
+        """
+        return Message(
+            topic=topic or self.topic,
+            payload=payload or copy.deepcopy(self.payload),
+            metadata=metadata or copy.deepcopy(self.metadata),
+            id=str(uuid.uuid4()),
+        )
+
+
+@dataclass(slots=True)
+class TopicStats:
+    """Statistics for a specific topic"""
+
+    topic_name: str
+    handler_count: int
+    subscription_count: int
+    queue_size: int
+    messages_published: int = 0
+    messages_processed: int = 0  # Counts successful handler executions
+    messages_failed: int = 0  # Counts failed handler executions
+    handler_names: list[str] = field(default_factory=list)
+    is_active: bool = True
+
+    def to_dict(self) -> dict:
+        """Convert topic stats to a dictionary"""
+        return {
+            "topic_name": self.topic_name,
+            "handler_count": self.handler_count,
+            "subscription_count": self.subscription_count,
+            "queue_size": self.queue_size,
+            "messages_published": self.messages_published,
+            "messages_processed": self.messages_processed,
+            "messages_failed": self.messages_failed,
+            "handler_names": self.handler_names,
+            "is_active": self.is_active,
+        }
+
+
+@dataclass(slots=True)
+class BrokerStats:
+    """Statistics about the broker's current state"""
+
+    total_topics: int
+    total_subscriptions: int
+    total_handlers: int
+    topics: dict[str, TopicStats] = field(default_factory=dict)
+    uptime_seconds: float = 0.0
+
+    def to_dict(self) -> dict:
+        """Convert stats to a dictionary for easy serialization"""
+        return {
+            "total_topics": self.total_topics,
+            "total_subscriptions": self.total_subscriptions,
+            "total_handlers": self.total_handlers,
+            "uptime_seconds": round(self.uptime_seconds, 3),
+            "topics": {topic: stats.to_dict() for topic, stats in self.topics.items()},
+        }
 
 
 # observer pattern
@@ -62,42 +129,19 @@ class BaseMessageBroker(ABC):
         pass
 
     @abstractmethod
-    def ack(self, message: Message) -> None:
+    def ack(self, message_id: str) -> None:
         """Acknowledge message processing"""
         pass
 
     @abstractmethod
-    def nack(self, message: Message, requeue: bool = True) -> None:
-        """Negative acknowledgment (processing failed)"""
+    def nack(self, message_id: str, requeue_message: Message | None = None) -> None:
+        """Negative acknowledgment"""
         pass
 
     @abstractmethod
     def close(self, timeout: float | None = None) -> None:
         """Close broker connection"""
         pass
-
-
-class BrokerStateProvider(Protocol):
-    """
-    Protocol for querying broker's current state.
-    Allows stats collector to get dynamic state without coupling to implementation.
-    """
-
-    def get_queue_size(self, topic: str) -> int:
-        """Get current queue size for a topic"""
-        ...
-
-    def get_unfinished_tasks(self) -> int:
-        """Get count of unfinished tasks"""
-        ...
-
-    def is_topic_active(self, topic: str) -> bool:
-        """Check if dispatch thread is running for topic"""
-        ...
-
-    def get_all_topics(self) -> list[str]:
-        """Get list of all topics"""
-        ...
 
 
 class BrokerListener(ABC):
@@ -145,53 +189,3 @@ class BrokerListener(ABC):
     def on_dispatch_thread_started(self, topic: str) -> None:
         """Called when a dispatch thread starts for a topic"""
         pass
-
-
-@dataclass
-class TopicStats:
-    """Statistics for a specific topic"""
-
-    topic_name: str
-    handler_count: int
-    subscription_count: int
-    queue_size: int
-    messages_published: int = 0
-    messages_processed: int = 0  # Counts successful handler executions
-    messages_failed: int = 0  # Counts failed handler executions
-    handler_names: list[str] = field(default_factory=list)
-    is_active: bool = True
-
-    def to_dict(self) -> dict:
-        """Convert topic stats to a dictionary"""
-        return {
-            "topic_name": self.topic_name,
-            "handler_count": self.handler_count,
-            "subscription_count": self.subscription_count,
-            "queue_size": self.queue_size,
-            "messages_published": self.messages_published,
-            "messages_processed": self.messages_processed,
-            "messages_failed": self.messages_failed,
-            "handler_names": self.handler_names,
-            "is_active": self.is_active,
-        }
-
-
-@dataclass
-class BrokerStats:
-    """Statistics about the broker's current state"""
-
-    total_topics: int
-    total_subscriptions: int
-    total_handlers: int
-    topics: dict[str, TopicStats] = field(default_factory=dict)
-    uptime_seconds: float = 0.0
-
-    def to_dict(self) -> dict:
-        """Convert stats to a dictionary for easy serialization"""
-        return {
-            "total_topics": self.total_topics,
-            "total_subscriptions": self.total_subscriptions,
-            "total_handlers": self.total_handlers,
-            "uptime_seconds": round(self.uptime_seconds, 3),
-            "topics": {topic: stats.to_dict() for topic, stats in self.topics.items()},
-        }
