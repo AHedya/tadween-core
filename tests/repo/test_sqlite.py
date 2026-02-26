@@ -5,7 +5,7 @@ import pytest
 
 from tadween_core.repo import SqliteRepo
 
-from ..conftest import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart
+from .._types import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart
 
 
 def test_sqlite_create_and_exists(sqlite_repo: SqliteRepo):
