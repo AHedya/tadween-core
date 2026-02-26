@@ -104,7 +104,7 @@ class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT]):
         self._stage_policy.on_error(message, error, active_broker)
 
         if active_broker:
-            active_broker.nack(message, requeue=False)
+            active_broker.nack(message.id)
 
     def on_done(self, message, envelope):
         self._stage_policy.on_done(message, envelope)

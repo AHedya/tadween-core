@@ -23,7 +23,7 @@ class InMemoryBroker(BaseMessageBroker):
 
     def __init__(self):
         self._topics: dict[str, Queue[Message]] = {}
-        # self._handlers: dict[str, tuple[Callable]] = {}
+        # tuple[tuple[Callable,bool]] => a topic(str) could have many handlers. A handler is a callable, and a boolean that defines acknowledgement behavior: auto ack or manual ack
         self._handlers: dict[str, tuple[tuple[Callable, bool]]] = {}
         # subscription_id -> (topic, handler, auto_ack)
         self._subscriptions: dict[str, tuple[str, Callable, bool]] = {}
@@ -134,7 +134,7 @@ class InMemoryBroker(BaseMessageBroker):
                         )
                     finally:
                         if auto_ack:
-                            self.ack(message)
+                            self.ack(message.id)
                 queue.task_done()
             except Empty:
                 continue
@@ -182,30 +182,27 @@ class InMemoryBroker(BaseMessageBroker):
             t.join(timeout=timeout)
         logger.info("Broker closed.")
 
-    def ack(self, message: Message) -> None:
+    def ack(self, message_id: str) -> None:
         """
         Decrements the reference count for a specific message.
         Validates that the message is actually pending.
         """
         with self._quiescence_cond:
-            if message.id not in self._pending_acks:
-                logger.warning(f"Double Ack or Unknown Message ID: {message.id}")
+            if message_id not in self._pending_acks:
+                logger.warning(f"Double Ack or Unknown Message ID: {message_id}")
                 return
-            self._pending_acks[message.id] -= 1
+            self._pending_acks[message_id] -= 1
 
-            # Debug logging
-            # logger.debug(f"Ack {message.id}. Remaining refs: {self._pending_acks[message.id]}")
-
-            if self._pending_acks[message.id] <= 0:
-                del self._pending_acks[message.id]
+            if self._pending_acks[message_id] <= 0:
+                del self._pending_acks[message_id]
                 # If Dictionary is empty, the entire system is idle
                 if not self._pending_acks:
                     self._quiescence_cond.notify_all()
 
-    def nack(self, message: Message, requeue: bool = True) -> None:
-        self.ack(message)
-        if requeue:
-            self.publish(message)
+    def nack(self, message_id: str, requeue_message: Message | None = None) -> None:
+        self.ack(message_id)
+        if requeue_message:
+            self.publish(requeue_message)
 
     def add_listener(self, listener: BrokerListener) -> None:
         """Add a listener to receive broker events"""
