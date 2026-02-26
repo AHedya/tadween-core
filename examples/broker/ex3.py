@@ -21,7 +21,7 @@ broker.add_listener(stats_listener)
 #      └─> [B3] (auto-ack)             └─> [B2] do something. (auto-ack)
 #           ↓
 #       <topic.B3-C1>
-#           └─> [C1] (auto-ack)
+#           └─> [C1] do something, fail, nack and requeue. (manual-ack)
 
 
 def A1(msg: Message):
