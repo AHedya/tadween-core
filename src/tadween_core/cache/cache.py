@@ -67,9 +67,12 @@ class Cache(Generic[BucketSchemaT]):
         Store a schema instance in the cache with an optional per-bucket read quota.
         Args:
             key: Cache key
+
             bucket: Instance of the schema type to cache
+
             quota: Optional read quota for all entries (each) in this bucket.
                 Overrides policy default.
+
             trim: evict bucket entries if bucket size exceeds per-bucket limit (cache policy)
         """
         # Ensure we have space for a new bucket if it's new

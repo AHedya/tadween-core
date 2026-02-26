@@ -1,20 +1,29 @@
 # Artifact
 
-The `artifact` package defines the core data model and its lazy-loaded parts in Tadween.
+The `artifact` package defines the core data model and its lazy-loaded parts.
 
 ## Concepts
 
-- **BaseArtifact**: An abstract contract for any artifact object (`id`, `status`, `metadata`).
-- **TadweenArtifact**: The default artifact model with lazy-loaded parts (e.g., ASRResult, LLMResult).
+- **BaseArtifact**: An abstract contract for any artifact object.
 - **ArtifactPart**: A base class for all heavy artifact parts. Inherit from this class to mark a field as a lazy-loaded part.
+- **TadweenArtifact**: The default artifact model. Battery-included.
 
+## Anatomy
+
+```
+└── artifact
+    ├── __init__.py
+    ├── base.py     => Defines `BaseArtifact` and `ArtifactPart` contracts.
+    ├── README.md
+    └── tadween.py  => Defines `TadweenArtifact` and implements helpers.
+```
 ## Lazy Loading & Data Normalization
 
 Large data volumes (e.g., audio transcriptions, speaker diarization) are split into:
 - **Root**: Metadata, identity (aid), status.
 - **Parts**: Large, lazy-loaded components.
 
-This approach ensures minimal network overhead and memory usage when moving artifacts across different stages of a pipeline.
+This approach ensures minimal network overhead and memory usage when moving artifacts across different stages of a pipeline. In addition to resume-ability
 
 ## Usage Example
 
@@ -32,16 +41,3 @@ artifact.asr = asr_data
 print(artifact.asr.transcription)  # Hello world
 ```
 
-## Artifact Stages
-
-`TadweenArtifact` includes a `current_stage` field to track its progress:
-- `CREATED`: Initialized.
-- `METADATA`: Metadata added.
-- `ASR`: ASR results added.
-- `NORMALIZED`: Results normalized.
-- `LLM`: LLM analysis results added.
-- `ERROR`: An error occurred.
-- `DONE`: Processing completed.
-
----
-*For more examples, see [examples/artifact.py](../../../examples/artifact.py) (if available).*
