@@ -1,12 +1,10 @@
 from collections.abc import Callable
-from typing import Any, Generic
-
-from typing_extensions import TypeVar
+from typing import Any, Generic, TypeVar
 
 from tadween_core.cache.adapter import SchemaAdapter
 from tadween_core.cache.base import CacheEntry
 
-T = TypeVar("T", default=Any)
+T = TypeVar("T")
 
 
 class BucketProxy(Generic[T]):
@@ -16,6 +14,8 @@ class BucketProxy(Generic[T]):
 
     This enables transparent caching with automatic touch() on reads and
     metadata updates on writes, while maintaining full type hints for IDEs.
+
+    `_on_read` and `_on_write` are hooks passed by the `Cache` object to update the `BucketProxy` instance on read/write
     """
 
     __slots__ = ("_internal", "_adapter", "_on_read", "_on_write")

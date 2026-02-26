@@ -48,10 +48,10 @@ The framework is composed of several independent but integrated modules:
 | **Handler** | The unit of execution (Computational or Operational). | [docs](src/tadween_core/handler/README.md) |
 | **Task Queue** | Manages async execution (Threads or Processes). | [docs](src/tadween_core/task_queue/README.md) |
 | **Broker** | The message bus for inter-stage communication. | [docs](src/tadween_core/broker/README.md) |
-| **Workflow & Stage** | Orchestrates the DAG and manages stage-level logic. | [docs](src/tadween_core/workflow/README.md) |
 | **Cache** | High-performance, type-safe caching system. | [docs](src/tadween_core/cache/README.md) |
+| **Artifact** | The core data model used in persistence layer. | [docs](src/tadween_core/types/artifact/README.md) |
 | **Repository** | Persistence layer for Artifacts. | [docs](src/tadween_core/repo/README.md) |
-| **Artifact** | The core data model moved across the pipeline. | [docs](src/tadween_core/types/artifact/README.md) |
+| **Workflow & Stage** | Orchestrates the DAG and manages stage-level logic. | [docs](src/tadween_core/workflow/README.md) |
 
 ---
 *For detailed implementation details, please refer to the specific component documentation linked above.*
