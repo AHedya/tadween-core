@@ -7,7 +7,7 @@ import pytest
 
 from tadween_core.repo.json import FsJsonRepo, LockMode
 
-from ..conftest import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart
+from .._types import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart
 
 
 def test_create_and_exists(json_store: FsJsonRepo):
