@@ -1,26 +1,43 @@
+import functools
 import sqlite3
 import threading
-import time
-from collections.abc import Iterable
+from collections import defaultdict
+from collections.abc import Sequence
+from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel
-
-from tadween_core.types.artifact.tadween import (
-    ArtifactStage,
-    PartName,
-    TadweenArtifact,
+from tadween_core.repo.base import ART, BaseArtifactRepo, PartNameT
+from tadween_core.types.artifact.base import (
+    ArtifactPart,
+    RootModel,
 )
 
-from .base import ART, BaseArtifactRepo, PartNameT
+_PY_TO_SQLITE: dict[type, str] = {
+    str: "TEXT",
+    int: "INTEGER",
+    float: "REAL",
+    bool: "INTEGER",
+    UUID: "TEXT",
+    Enum: "TEXT",
+}
+
+
+def _write_locked(method):
+    """Serialize write operations using the instance's _write_lock."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._write_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
     """
-    SQLite-based artifact repository.
-    Efficiently handles root metadata and heavy parts using a two-table schema.
-    Thread-safe implementation with WAL mode enabled.
+    SQLite-based SQLite implementation of :class:`BaseArtifactRepo`
     """
 
     def __init__(
@@ -28,283 +45,331 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
         db_path: str | Path,
         artifact_type: type[ART] | None = None,
     ):
-        super().__init__(artifact_type)  # Sets _part_types via parent
+        super().__init__(artifact_type)
         self.db_path = str(db_path)
-        self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._root_table = f"{self._artifact_type.__name__.lower()}_root"
+        self._root_type: type[RootModel] = artifact_type.model_fields["root"].annotation
+        self._root_type_map = self._root_type.get_field_type_map()
+
         self._init_db()
+        self._root_cols: str | None = None
+        self._root_cols_placeholders: str | None = None
+        self._set_constants()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        # check_same_thread=False is safe because we use a threading.Lock for writes
-        # and SQLite handles concurrent reads well in WAL mode.
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("PRAGMA busy_timeout=5000;")
 
-    def _init_db(self) -> None:
-        with self._get_connection() as conn:
+            columns = ["id TEXT PRIMARY KEY"]
+            for name, py_type in self._root_type_map.items():
+                if name == "id":
+                    continue
+                columns.append(f"{name} {_PY_TO_SQLITE[py_type]} NOT NULL")
+
+            for name in self._eager_map:
+                columns.append(f"{name} TEXT NOT NULL")
+
             conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS artifacts (
-                    id TEXT PRIMARY KEY,
-                    current_stage TEXT NOT NULL,
-                    error_stage TEXT,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    metadata TEXT -- JSON blob
-                )
-                """
+                f"CREATE TABLE IF NOT EXISTS {self._root_table} ({', '.join(columns)})"
             )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS artifact_parts (
-                    artifact_id TEXT NOT NULL,
-                    part_name TEXT NOT NULL,
-                    data TEXT NOT NULL, -- JSON blob
-                    PRIMARY KEY (artifact_id, part_name),
-                    FOREIGN KEY (artifact_id) REFERENCES artifacts (id) ON DELETE CASCADE
-                )
-                """
+
+            # Build heavy parts Tables
+            for part_name in self._part_map:
+                table_name = self._get_part_table_name(part_name)
+                conn.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {table_name} (
+                        artifact_id TEXT PRIMARY KEY,
+                        data TEXT NOT NULL,
+                        FOREIGN KEY (artifact_id) REFERENCES {self._root_table} (id) ON DELETE CASCADE
+                    )
+                """)
+
+    def _get_part_table_name(self, part_name: str):
+        return f"{self._artifact_type.__name__.lower()}_part_{part_name.lower()}"
+
+    def _trim_part_table_name(self, table_name: str) -> str:
+        prefix = f"{self._artifact_type.__name__.lower()}_part_"
+        if not table_name.startswith(prefix):
+            raise ValueError(
+                f"Table name {table_name!r} does not start with expected prefix {prefix!r}"
             )
-            conn.commit()
+        return table_name[len(prefix) :]
 
-    def create(self, artifact: ART) -> None:
-        with self._lock:
-            with self._get_connection() as conn:
-                try:
-                    exclude = self._artifact_type.part_names()
-                    root_data = artifact.model_dump(exclude=exclude)
+    def _set_constants(self):
+        cols = list(
+            self._artifact_type.model_fields["root"].annotation.model_fields.keys()
+        )
+        cols.extend(self._eager_map.keys())
+        self._root_cols = ", ".join(cols)
+        self._root_cols_placeholders = ", ".join(f":{k}" for k in cols)
 
-                    # Use Pydantic's JSON serialization for metadata to handle Path objects etc.
-                    metadata_json = None
-                    if artifact.metadata:
-                        metadata_json = artifact.metadata.model_dump_json()
+        self._parts_tables = [
+            self._get_part_table_name(part) for part in self._part_map.keys()
+        ]
 
-                    conn.execute(
-                        """
-                        INSERT INTO artifacts (id, current_stage, error_stage, created_at, updated_at, metadata)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            root_data["id"],
-                            root_data["current_stage"],
-                            root_data.get("error_stage"),
-                            root_data["created_at"],
-                            root_data["updated_at"],
-                            metadata_json,
-                        ),
+    def _extract_root_row(self, artifact: ART) -> dict[str, str]:
+        """Flattens the artifact into a dictionary matching the root table columns."""
+        row = artifact.root.model_dump(mode="json")
+        # Eager models as JSON
+        for name in self._eager_map:
+            val = getattr(artifact, name)
+            if val is not None:
+                row[name] = val.model_dump_json()
+        return row
+
+    def _deserialize_sql_row(self, row: dict[str, Any]) -> ART:
+        root_fields = self._artifact_type.model_fields[
+            "root"
+        ].annotation.model_fields.keys()
+
+        root_data = {}
+        eager_data = {}
+        lazy_data = {}
+
+        for f in row:
+            if f in root_fields:
+                root_data[f] = row[f]
+            elif f in self._eager_map.keys():
+                eager_data[f] = row[f]
+            else:
+                part = self._trim_part_table_name(f)
+                if part in self._part_map.keys():
+                    lazy_data[part] = row[f]
+                else:
+                    self.logger.warning(f"Unrecognized field: {f}")
+
+        model_dict = {}
+
+        # rebuild root
+        model_dict["root"] = self._artifact_type.model_fields[
+            "root"
+        ].annotation.model_validate(root_data)
+
+        for k, v in eager_data.items():
+            model_dict[k] = self._eager_map.get(k).model_validate_json(v)
+
+        for k, v in lazy_data.items():
+            if v is None:
+                continue
+            model_dict[k] = self._part_map.get(k).model_validate_json(v)
+        return self._artifact_type.model_validate(model_dict)
+
+    @_write_locked
+    def save_many(self, artifacts, include="all"):
+        include = self._resolve_batch_part_names(include, batch_len=len(artifacts))
+
+        root_rows = []
+        # part_name -> list[tuple(artifact_id,data)]
+        part_table_rows: dict[str, list[tuple[str, str]]] = defaultdict(list)
+
+        for art, inc in zip(artifacts, include, strict=True):
+            root_rows.append(self._extract_root_row(art))
+            for part_included in inc:
+                value = getattr(art, part_included)
+                if value is None:
+                    self.logger.warning(
+                        f'{self._artifact_type.__name__}(id="{art.id}") '
+                        f"is trying to save part [{part_included}] with `None` value. Skipping"
                     )
-                except sqlite3.IntegrityError:
-                    raise FileExistsError(f"Artifact {artifact.id} already exists")
+                    continue
+                part_table_rows[part_included].append((art.id, value.model_dump_json()))
 
-    def save(
-        self,
-        artifact: ART,
-        include: Iterable[PartNameT] | Literal["all"] | None = "all",
-    ) -> None:
-        parts_to_save = self._resolve_parts(include)
+        if not root_rows:
+            return
 
-        with self._lock:
-            with self._get_connection() as conn:
-                exclude = self._artifact_type.part_names()
-                root_data = artifact.model_dump(exclude=exclude)
-                updated_at = time.perf_counter()
+        root_stmt = f"""
+        INSERT OR REPLACE INTO {self._root_table} ({self._root_cols})
+        values ({self._root_cols_placeholders})
+        """
 
-                metadata_json = None
-                if artifact.metadata:
-                    metadata_json = artifact.metadata.model_dump_json()
+        with sqlite3.connect(self.db_path) as con:
+            con.executemany(root_stmt, root_rows)
 
-                conn.execute(
-                    """
-                    INSERT INTO artifacts (id, current_stage, error_stage, created_at, updated_at, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        current_stage = excluded.current_stage,
-                        error_stage = excluded.error_stage,
-                        updated_at = excluded.updated_at,
-                        metadata = excluded.metadata
-                    """,
-                    (
-                        artifact_id := root_data["id"],
-                        root_data["current_stage"],
-                        root_data.get("error_stage"),
-                        root_data["created_at"],
-                        updated_at,
-                        metadata_json,
-                    ),
+            for part, batch in part_table_rows.items():
+                if not batch:
+                    continue
+                # insert to a table at a time
+                con.executemany(
+                    f"""
+                    INSERT INTO {self._get_part_table_name(part)} (artifact_id, data) VALUES (?, ?)
+                    ON CONFLICT(artifact_id) DO UPDATE SET data=excluded.data
+                """,
+                    batch,
                 )
 
-                for part_name in parts_to_save:
-                    part_data = getattr(artifact, part_name)
-                    if part_data is not None:
-                        conn.execute(
-                            """
-                            INSERT INTO artifact_parts (artifact_id, part_name, data)
-                            VALUES (?, ?, ?)
-                            ON CONFLICT(artifact_id, part_name) DO UPDATE SET
-                                data = excluded.data
-                            """,
-                            (artifact_id, part_name, part_data.model_dump_json()),
-                        )
+    def save(self, artifact, include="all"):
+        include = self._resolve_part_names(include)
+        self.save_many(artifacts=[artifact], include=[include])
 
-    def _get_metadata_type(self) -> type[BaseModel] | None:
-        """Introspect the metadata field type from the artifact type."""
-        metadata_field = self._artifact_type.model_fields.get("metadata")
-        if metadata_field is None:
-            return None
-        ann = metadata_field.annotation
-        if ann is None:
-            return None
-        # Handle Optional[T] -> T
-        if hasattr(ann, "__args__"):
-            for arg in ann.__args__:
-                if isinstance(arg, type) and issubclass(arg, BaseModel):
-                    return arg
-        elif isinstance(ann, type) and issubclass(ann, BaseModel):
-            return ann
-        return None
+    def load(self, artifact_id, include=None, **options) -> ART | None:
+        include = self._resolve_part_names(include)
+        res = self._load([artifact_id], [include], True, **options)
+        return res.get(artifact_id)
 
-    def load(
-        self,
-        artifact_id: str,
-        include: Iterable[PartNameT] | Literal["all"] | None = None,
-    ) -> ART:
-        parts_to_load = self._resolve_parts(include)
+    def load_raw(self, artifact_id, include=None, **options) -> dict[str, Any] | None:
+        include = self._resolve_part_names(include)
+        res = self._load([artifact_id], [include], False, **options)
+        return res.get(artifact_id)
 
-        with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM artifacts WHERE id = ?", (artifact_id,)
-            ).fetchone()
-            if not row:
-                raise KeyError(f"Artifact not found: {artifact_id}")
+    def load_many(self, artifact_ids, include=None, **options) -> dict[str, ART | None]:
+        include = self._resolve_batch_part_names(include, len(artifact_ids))
+        return self._load(artifact_ids, include, True, **options)
 
-            root_dict = dict(row)
-            if root_dict["metadata"]:
-                metadata_type = self._get_metadata_type()
-                if metadata_type is not None:
-                    root_dict["metadata"] = metadata_type.model_validate_json(
-                        root_dict["metadata"]
-                    )
-
-            artifact = self._artifact_type.model_validate(root_dict)
-
-            if parts_to_load:
-                placeholders = ",".join("?" for _ in parts_to_load)
-                parts_rows = conn.execute(
-                    f"SELECT part_name, data FROM artifact_parts "
-                    f"WHERE artifact_id = ? AND part_name IN ({placeholders})",
-                    (artifact_id, *parts_to_load),
-                ).fetchall()
-
-                for p_row in parts_rows:
-                    p_name, p_data = p_row["part_name"], p_row["data"]
-                    model_cls = self._part_types[p_name]
-                    setattr(artifact, p_name, model_cls.model_validate_json(p_data))
-
-            return artifact
-
-    def save_part(
-        self, artifact_id: str, part_name: PartNameT, data: BaseModel
-    ) -> None:
-        if part_name not in self._part_types:
-            raise ValueError(f"Unknown part: {part_name}")
-
-        with self._lock:
-            with self._get_connection() as conn:
-                exists = conn.execute(
-                    "SELECT 1 FROM artifacts WHERE id = ?", (artifact_id,)
-                ).fetchone()
-                if not exists:
-                    raise FileNotFoundError(f"Artifact {artifact_id} not found")
-
-                conn.execute(
-                    """
-                    INSERT INTO artifact_parts (artifact_id, part_name, data)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(artifact_id, part_name) DO UPDATE SET
-                        data = excluded.data
-                    """,
-                    (artifact_id, part_name, data.model_dump_json()),
-                )
-
-    def load_part(self, artifact_id: str, part_name: PartNameT) -> BaseModel | None:
-        if part_name not in self._part_types:
-            raise ValueError(f"Unknown part: {part_name}")
-
-        with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT data FROM artifact_parts WHERE artifact_id = ? AND part_name = ?",
-                (artifact_id, part_name),
-            ).fetchone()
-
-            if not row:
-                return None
-
-            model_cls = self._part_types[part_name]
-            return model_cls.model_validate_json(row["data"])
+    def load_many_raw(
+        self, artifact_ids, include=None, **options
+    ) -> dict[str, dict[str, Any] | None]:
+        include = self._resolve_batch_part_names(include, len(artifact_ids))
+        return self._load(artifact_ids, include, False, **options)
 
     def exists(self, artifact_id: str) -> bool:
-        with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM artifacts WHERE id = ?", (artifact_id,)
+        with sqlite3.connect(self.db_path) as con:
+            row = con.execute(
+                f"SELECT 1 FROM {self._root_table} WHERE id = ? LIMIT 1",
+                (artifact_id,),
             ).fetchone()
-            return row is not None
+        return row is not None
 
-    def delete(self, artifact_id: str) -> None:
-        with self._lock:
-            with self._get_connection() as conn:
-                conn.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
-
-    def _resolve_parts(
-        self, include: Iterable[PartNameT] | Literal["all"] | None
-    ) -> set[PartNameT]:
-        if include == "all":
-            return set(self._part_types.keys())
-        if include is None:
-            return set()
-        return set(include)
-
-
-# ---------------------------------------------------------------------------
-# Tadween-specific subclass — zero generics for end users
-# ---------------------------------------------------------------------------
-
-
-class TadweenSqliteRepo(SqliteRepo[TadweenArtifact, PartName]):
-    """
-    Ready-to-use SQLite repo for TadweenArtifact.
-
-        repo = TadweenSqliteRepo(db_path=Path("/data/tadween.db"))
-    """
-
-    def __init__(self, db_path: str | Path) -> None:
-        super().__init__(db_path, artifact_type=TadweenArtifact)
-
-    def update_status(
+    def load_part(
         self,
-        artifact_id: str,
-        stage: ArtifactStage,
-        error_stage: ArtifactStage | None = None,
-    ) -> None:
-        """
-        Lightweight status patch — touches only the artifacts table,
-        leaving all parts untouched.
+        artifact_id,
+        part_name,
+    ) -> ArtifactPart | None:
+        if part_name not in self._part_map:
+            raise ValueError(
+                f"Unknown part {part_name} for {self._artifact_type.__name__}. "
+                f"Valid parts: {set(self._part_map)}"
+            )
+        if not self.exists(artifact_id):
+            raise KeyError(
+                f"{self._artifact_type.__name__} with id={artifact_id!r} does not exist."
+            )
+        table = self._get_part_table_name(part_name)
+        with sqlite3.connect(self.db_path) as con:
+            row = con.execute(
+                f"SELECT data FROM {table} WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._part_map[part_name].model_validate_json(row[0])
 
-        Kept here (not on the generic base) because ArtifactStage is
-        Tadween-specific.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                result = conn.execute(
-                    """
-                    UPDATE artifacts
-                    SET current_stage = ?,
-                        error_stage   = ?,
-                        updated_at    = ?
-                    WHERE id = ?
-                    """,
-                    (stage, error_stage, time.perf_counter(), artifact_id),
+    @_write_locked
+    def save_part(
+        self,
+        artifact_id,
+        part_name,
+        data,
+    ) -> None:
+        if part_name not in self._part_map:
+            raise ValueError(
+                f"Unknown part {part_name!r} for {self._artifact_type.__name__}. "
+                f"Valid parts: {set(self._part_map)}"
+            )
+        if not self.exists(artifact_id):
+            raise KeyError(
+                f"{self._artifact_type.__name__} with id={artifact_id!r} does not exist."
+            )
+        expected_type = self._part_map[part_name]
+        if not isinstance(data, expected_type):
+            raise TypeError(
+                f"Invalid data type for part: {self._artifact_type.__name__}.{part_name} "
+                f"Expected [{expected_type.__name__}], got [{type(data).__name__}]."
+            )
+
+        table = self._get_part_table_name(part_name)
+        with sqlite3.connect(self.db_path) as con:
+            con.execute(
+                f"""
+                INSERT INTO {table} (artifact_id, data) VALUES (?, ?)
+                ON CONFLICT(artifact_id) DO UPDATE SET data = excluded.data
+                """,
+                (artifact_id, data.model_dump_json()),
+            )
+
+    @_write_locked
+    def delete_artifact(self, artifact_id: str) -> None:
+        with sqlite3.connect(self.db_path) as con:
+            con.execute("PRAGMA foreign_keys = ON;")
+            con.execute(
+                f"DELETE FROM {self._root_table} WHERE id = ?",
+                (artifact_id,),
+            )
+
+    @_write_locked
+    def delete_parts(
+        self,
+        artifact_id,
+        parts,
+    ) -> None:
+        part_names = self._resolve_part_names(parts)
+        if not self.exists(artifact_id):
+            raise KeyError(
+                f"{self._artifact_type.__name__} with id={artifact_id!r} does not exist."
+            )
+        with sqlite3.connect(self.db_path) as con:
+            for part_name in part_names:
+                table = self._get_part_table_name(part_name)
+                con.execute(
+                    f"DELETE FROM {table} WHERE artifact_id = ?",
+                    (artifact_id,),
                 )
-                if result.rowcount == 0:
-                    raise FileNotFoundError(f"Artifact {artifact_id} not found")
+
+    def _load(
+        self,
+        artifact_ids: Sequence[str],
+        include: list[list[str]],
+        deserialize: bool = True,
+        **options,
+    ) -> dict[str, ART | dict[str, Any] | None]:
+        if not artifact_ids:
+            return {}
+
+        # Build the CTE rows: ('id1', 1, 1), ('id0', 0, 0), ('id2', 0, 1)
+        cte_rows = []
+        cte_params = []
+
+        for _id, _include in zip(artifact_ids, include, strict=True):
+            flags = [1 if pt in _include else 0 for pt in self._part_map.keys()]
+            placeholders = ", ".join(["?"] * (1 + len(self._part_map.keys())))
+            cte_rows.append(f"({placeholders})")
+            cte_params.extend([_id] + flags)
+
+        cte_columns = ["id"] + [f"need_{c}" for c in self._parts_tables]
+        cte_col_sql = ", ".join(cte_columns)
+        cte_values_sql = ", ".join(cte_rows)
+
+        # Build conditional subquery per part table
+        parts_selects = []
+        for p in self._parts_tables:
+            parts_selects.append(
+                f"CASE n.need_{p} WHEN 1 "
+                f"THEN (SELECT data FROM {p} WHERE artifact_id = p.id) "
+                f"END AS {p}"
+            )
+        parts_sql = ",\n       ".join(parts_selects)
+        sql = f"""
+            WITH needed({cte_col_sql}) AS (VALUES {cte_values_sql})
+            SELECT p.*,
+                    {parts_sql}
+            FROM {self._root_table} p
+            JOIN needed n ON n.id = p.id
+        """
+
+        with sqlite3.connect(self.db_path) as con:
+            con.row_factory = sqlite3.Row
+            res = con.execute(sql, cte_params)
+            res = [dict(row) for row in res.fetchall()]
+
+        # lookup
+        rows_by_id = {row["id"]: row for row in res}
+        result = {_id: rows_by_id.get(_id) for _id in artifact_ids}
+
+        if deserialize:
+            result = {
+                _id: self._deserialize_sql_row(row) if row is not None else None
+                for _id, row in result.items()
+            }
+        return result

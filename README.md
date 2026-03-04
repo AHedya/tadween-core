@@ -37,7 +37,7 @@ Tadween-core is built on the principle that every step of a pipeline should be o
 - **Environment Agnostic**: Run locally, in production, or distributed.
 - **Type-Safe**: Leveraging Pydantic for robust I/O and state management.
 - **Stateful**: Integrated caching and persistence layers.
-- **Concurrency-First**: Managed thread and process-based task queues resolve I/O and CPU/GPU bottlenecks by allowing stages to run in parallel where the DAG permits.
+- **Concurrency-First**: Managed thread and process-based task queues resolve I/O and CPU bottlenecks by allowing stages to run in parallel where the DAG permits.
 
 ## System Architecture
 
@@ -51,7 +51,8 @@ The framework is composed of several independent but integrated modules:
 | **Cache** | High-performance, type-safe caching system. | [docs](src/tadween_core/cache/README.md) |
 | **Artifact** | The core data model used in persistence layer. | [docs](src/tadween_core/types/artifact/README.md) |
 | **Repository** | Persistence layer for Artifacts. | [docs](src/tadween_core/repo/README.md) |
-| **Workflow & Stage** | Orchestrates the DAG and manages stage-level logic. | [docs](src/tadween_core/workflow/README.md) |
+| **Stage** | Domain-related layer. Manages tq, cache, repo. managed by the workflow | [docs](src/tadween_core/stage/README.md) |
+| **Workflow** | Orchestrates the DAG and manages stage-level logic. | [docs](src/tadween_core/workflow/README.md) |
 
 ---
 *For detailed implementation details, please refer to the specific component documentation linked above.*

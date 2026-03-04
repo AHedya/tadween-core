@@ -188,7 +188,6 @@ class MemoryMonitor:
                             }
                     time.sleep(1.0)
 
-            # FIX: Create thread first, then start it
             cls._discovery_thread = threading.Thread(
                 target=_discovery_worker, daemon=True
             )

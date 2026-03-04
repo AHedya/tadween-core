@@ -29,6 +29,10 @@ Pydantic models are validated by fields not as a model. This is because partial 
     └── README.md
 ```
 
+## Usage Example
+
+*For more examples, see [examples/cache.py](../../../examples/cache/README.md).*
+
 ## The Proxy & "Mirage Effect"
 
 The cache returns `BucketProxy[MySchema] | MySchema`. This serves as a warning that you are holding a **proxy**, not a direct instance.
@@ -36,11 +40,6 @@ The cache returns `BucketProxy[MySchema] | MySchema`. This serves as a warning t
 - **Ergonomics**: Provides full type-hints for schema fields and proxy methods.
 - **Lazy Loading**: Accessing a field via the proxy tracks its metadata and read counts.
 - **Honesty**: If you need a true instance (e.g., for Pydantic validation), call `proxy.to_instance()`.
-
-
-## Usage Example
-
-*For more examples, see [examples/cache.py](../../../examples/cache/README.md).*
 
 ## Eviction Strategies
 

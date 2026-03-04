@@ -8,7 +8,6 @@ from .exceptions import (
     StageError,
     TadweenError,
 )
-from .types.artifact.tadween import TadweenArtifact
 from .utils import set_logger
 
 try:
@@ -18,7 +17,6 @@ except PackageNotFoundError:
 
 
 __all__ = [
-    "TadweenArtifact",
     "TadweenError",
     "StageError",
     "PolicyError",

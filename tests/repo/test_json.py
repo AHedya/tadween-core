@@ -1,381 +1,124 @@
-import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from multiprocessing import Process, Queue
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa
+from pathlib import Path  # noqa
+from typing import TypeAlias
 
-import pytest
+import pytest  # noqa
 
-from tadween_core.repo.json import FsJsonRepo, LockMode
+from tadween_core.repo.json import FsJsonRepo
 
-from .._types import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart
+from .._types import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart, part_names  # noqa
 
-
-def test_create_and_exists(json_store: FsJsonRepo):
-    artifact = ArtifactTest(id="test-1")
-    json_store.create(artifact)
-    assert json_store.exists("test-1")
-    assert not json_store.exists("non-existent")
+FsJsonTestRepo: TypeAlias = FsJsonRepo[ArtifactTest, part_names]
 
 
-def test_create_already_exists(json_store: FsJsonRepo):
-    artifact = ArtifactTest(id="test-1")
-    json_store.create(artifact)
-    with pytest.raises(FileExistsError):
-        json_store.create(artifact)
-
-
-def test_save_and_load_root(json_store: FsJsonRepo):
+def test_json_basic(
+    json_repo: FsJsonTestRepo,
+    artifact_root,
+    artifact_metadata,
+):
+    id = artifact_root.id
     artifact = ArtifactTest(
-        id="test-2",
-        metadata=ArtifactTestMetadata(
-            checksum="abc", audio_path=Path("/tmp/audio.wav")
-        ),
+        root=artifact_root,
+        metadata=artifact_metadata,
     )
-    json_store.save(artifact, include=None)  # Only root
+    json_repo.save(artifact)
+    assert json_repo.exists(id)
+    assert not json_repo.exists("sql-none")
 
-    loaded = json_store.load("test-2")
-    assert loaded.id == "test-2"
-    assert loaded.metadata.checksum == "abc"
-    assert loaded.part_a is None
-
-
-def test_save_and_load_parts(json_store: FsJsonRepo):
-    artifact = ArtifactTest(id="test-3")
-    artifact.part_a = ArtifactTestPart(content="hello")
-
-    json_store.save(artifact, include=["part_a"])
-
-    # Load only root
-    loaded_root = json_store.load("test-3", include=None)
-    assert loaded_root.part_a is None
-
-    # Load with part_a
-    loaded_part_a = json_store.load("test-3", include=["part_a"])
-    assert loaded_part_a.part_a.content == "hello"
+    assert isinstance(json_repo.load(id), ArtifactTest)
+    assert isinstance(json_repo.load_raw(id), dict)
+    assert isinstance(json_repo.load_many([id]).get(id), ArtifactTest)
+    assert isinstance(json_repo.load_many_raw([id]).get(id), dict)
 
 
-def test_save_part_directly(json_store: FsJsonRepo):
-    artifact = ArtifactTest(id="test-4")
-    json_store.create(artifact)
-
-    part_data = ArtifactTestPart(content="direct save")
-    json_store.save_part("test-4", "part_a", part_data)
-
-    loaded = json_store.load("test-4", include=["part_a"])
-    assert loaded.part_a.content == "direct save"
-
-
-def test_delete(json_store: FsJsonRepo):
-    artifact = ArtifactTest(id="test-5")
-    json_store.create(artifact)
-    assert json_store.exists("test-5")
-
-    json_store.delete("test-5")
-    assert not json_store.exists("test-5")
-
-
-# --- Concurrency Tests ---
-
-
-def test_concurrent_reads_no_blocking(
-    json_store: FsJsonRepo, full_artifact: ArtifactTest
+def test_json_save_and_load_parts(
+    json_repo: FsJsonTestRepo,
+    partial_artifact: ArtifactTest,
 ):
-    """
-    Multiple processes reading the same artifact concurrently.
-    With SHARED locks, they should NOT block each other.
-    """
-    # Setup: Save an artifact
-    json_store.save(full_artifact)
-    artifact_id = full_artifact.id
+    art_id = partial_artifact.id
 
-    # Test: 10 concurrent readers
-    num_readers = 10
+    json_repo.save(partial_artifact, include="all")
+    db_obj = json_repo.load(art_id)
+    assert db_obj.part_a is None
+    # note that db_obj is type hinted as None. As the original schema defines part_a as not optional
+    # However, we inject optional parts at runtime, not statically.
+    assert db_obj.part_b is None
 
-    with ProcessPoolExecutor(max_workers=num_readers) as executor:
-        start_time = time.perf_counter()
+    db_obj = json_repo.load(art_id, include="all")
+    assert isinstance(db_obj.part_a, ArtifactTestPart)
+    assert db_obj.part_b is None
 
-        futures = [
-            executor.submit(_worker_read_artifact, json_store.base_path, artifact_id, i)
-            for i in range(num_readers)
-        ]
+    db_obj = json_repo.load(art_id, include=["part_a", "part_b"])
+    assert isinstance(db_obj.part_a, ArtifactTestPart)
+    assert db_obj.part_b is None
 
-        results = [f.result() for f in as_completed(futures)]
-        elapsed = time.perf_counter() - start_time
+    # save new part on the whole artifact
+    part_b = ArtifactTestPart()
+    db_obj.part_b = part_b
+    json_repo.save(db_obj)
 
-    # Verify: All reads succeeded
-    assert all(r["success"] for r in results), f"Some reads failed: {results}"
+    db_obj = json_repo.load(art_id, include=["part_a", "part_b"])
+    assert isinstance(db_obj.part_a, ArtifactTestPart)
+    assert isinstance(db_obj.part_b, ArtifactTestPart)
 
-    # Performance check: With shared locks, concurrent reads should be fast
-    print(f"10 concurrent reads took {elapsed:.3f}s")
-    assert elapsed < 2.0, (
-        f"Concurrent reads took too long ({elapsed}s) - might be blocking"
+    # Update a part
+    part = json_repo.load_part(artifact_id=art_id, part_name="part_a")
+    old_content = part.content
+    json_repo.save_part(
+        art_id, "part_a", ArtifactTestPart(content="new content better than never")
     )
+    new_part = json_repo.load_part(artifact_id=art_id, part_name="part_a")
+    assert old_content != new_part.content
+
+    # save incompatible part
+
+    with pytest.raises(TypeError):
+        json_repo.save_part(art_id, "part_a", ArtifactTestMetadata())
 
 
-def test_write_blocks_reads(json_store: FsJsonRepo, full_artifact: ArtifactTest):
-    """
-    A writer should block readers until write completes.
-    """
-    json_store.save(full_artifact)
-    artifact_id = full_artifact.id
-
-    results_queue = Queue()
-
-    def slow_writer():
-        """Writer that holds lock for a while."""
-        store = FsJsonRepo(json_store.base_path, artifact_type=ArtifactTest)
-
-        # Manually acquire lock to simulate slow write
-        with store._lock_artifact(artifact_id, mode=LockMode.EXCLUSIVE):
-            results_queue.put(
-                {"event": "writer_acquired_lock", "time": time.perf_counter()}
-            )
-            time.sleep(0.5)
-
-            # Do the actual write
-            artifact = ArtifactTest(
-                id=artifact_id,
-                metadata=full_artifact.metadata,
-            )
-            store._write_atomic(
-                store._get_dir(artifact_id) / "root.json",
-                artifact,
-            )
-            results_queue.put(
-                {"event": "writer_released_lock", "time": time.perf_counter()}
-            )
-
-    def reader():
-        """Reader that should be blocked by writer."""
-        store = FsJsonRepo(json_store.base_path, artifact_type=ArtifactTest)
-        results_queue.put(
-            {"event": "reader_attempting_lock", "time": time.perf_counter()}
-        )
-
-        artifact = store.load(
-            artifact_id,
-        )
-        results_queue.put(
-            {"event": "reader_acquired_lock", "time": time.perf_counter()}
-        )
-        return artifact
-
-    # Start writer first
-    writer_process = Process(target=slow_writer)
-    writer_process.start()
-
-    # Give writer time to acquire lock
-    time.sleep(0.1)
-
-    # Start reader (should block)
-    reader_process = Process(target=reader)
-    reader_process.start()
-
-    # Wait for both to complete
-    writer_process.join(timeout=2)
-    reader_process.join(timeout=2)
-
-    # Collect results
-    events = []
-    while not results_queue.empty():
-        events.append(results_queue.get())
-
-    events.sort(key=lambda x: x["time"])
-
-    # Verify: Writer acquired -> Writer released -> Reader acquired
-    event_types = [e["event"] for e in events]
-    assert event_types == [
-        "writer_acquired_lock",
-        "reader_attempting_lock",
-        "writer_released_lock",
-        "reader_acquired_lock",
-    ], f"Wrong event order: {event_types}"
-
-    # Verify: Reader was blocked for ~500ms
-    writer_acquired = next(
-        e["time"] for e in events if e["event"] == "writer_acquired_lock"
-    )
-    reader_acquired = next(
-        e["time"] for e in events if e["event"] == "reader_acquired_lock"
-    )
-    blocked_time = reader_acquired - writer_acquired
-
-    assert blocked_time >= 0.4, f"Reader wasn't properly blocked ({blocked_time:.3f}s)"
-
-
-def test_concurrent_writes_serialize(json_store: FsJsonRepo):
-    """
-    Multiple processes writing to the same artifact.
-    Writes should serialize (only one at a time).
-    Final state should be consistent (from one of the writers).
-    """
-    artifact_id = "test-concurrent-writes"
-    num_writers = 5
-
-    with ProcessPoolExecutor(max_workers=num_writers) as executor:
-        futures = [
-            executor.submit(_worker_save_artifact, json_store.base_path, artifact_id, i)
-            for i in range(num_writers)
-        ]
-
-        results = [f.result() for f in as_completed(futures)]
-
-    # Verify: All writes succeeded (no crashes)
-    assert all(r["success"] for r in results), f"Some writes failed: {results}"
-
-    # Verify: Final artifact is consistent
-    final_artifact = json_store.load(artifact_id, include="all")
-    assert final_artifact.id == artifact_id
-    assert final_artifact.metadata is not None
-    assert final_artifact.metadata.checksum.startswith("worker-")
-
-    # Extract worker ID from checksum
-    worker_id = int(final_artifact.metadata.checksum.split("-")[1])
-    assert final_artifact.metadata.duration == float(worker_id)
-
-
-def test_save_race_with_delete(json_store: FsJsonRepo):
-    """
-    Test race between save (creating) and delete operations.
-    Should not leave partial artifacts or crash.
-    """
-    artifact_id = "race-test-artifact"
-
-    def creator():
-        """Repeatedly create artifact."""
-        store = FsJsonRepo(json_store.base_path, artifact_type=ArtifactTest)
-        for i in range(10):
-            artifact = ArtifactTest(
-                id=artifact_id,
-                metadata=ArtifactTestMetadata(
-                    checksum=f"iter-{i}", audio_path=Path(f"/test/{i}.wav")
-                ),
-            )
-            try:
-                store.save(artifact)
-            except (FileNotFoundError, FileExistsError):
-                # Delete happened or create failed, that's OK
-                pass
-            time.sleep(0.01)
-
-    def deleter():
-        """Repeatedly delete artifact."""
-        store = FsJsonRepo(json_store.base_path, artifact_type=ArtifactTest)
-        time.sleep(0.005)  # Slight offset
-
-        for _ in range(10):
-            try:
-                if store.exists(artifact_id):
-                    store.delete(artifact_id)
-            except FileNotFoundError:
-                # Already deleted, that's OK
-                pass
-            time.sleep(0.01)
-
-    creator_process = Process(target=creator)
-    deleter_process = Process(target=deleter)
-
-    creator_process.start()
-    deleter_process.start()
-
-    creator_process.join(timeout=3)
-    deleter_process.join(timeout=3)
-
-    # Verify: No partial artifacts left
-    if json_store.exists(artifact_id):
-        artifact = json_store.load(artifact_id)
-        assert artifact.id == artifact_id
-
-
-def test_high_contention_read_write(
-    json_store: FsJsonRepo, full_artifact: ArtifactTest
+def test_json_delete(
+    json_repo: FsJsonTestRepo,
+    full_artifact: ArtifactTest,
 ):
-    """
-    Stress test: Many readers and writers competing for same artifact.
-    Should maintain consistency without corruption.
-    """
-    json_store.save(full_artifact)
-    artifact_id = full_artifact.id
+    id = full_artifact.id
+    json_repo.delete_artifact("non-existing")
 
-    num_workers = 10  # Reduced for faster CI
-    iterations = 5
+    with pytest.raises(KeyError):
+        json_repo.delete_parts("non-existing", "all")
 
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = [
-            executor.submit(
-                _worker_read_write_cycle,
-                json_store.base_path,
-                artifact_id,
-                i,
-                iterations,
-            )
-            for i in range(num_workers)
-        ]
+    json_repo.save(full_artifact, "all")
+    json_repo.delete_parts(id, "all")
 
-        results = [f.result() for f in as_completed(futures)]
+    db_art = json_repo.load(id, "all")
+    assert db_art.part_a is None
+    assert db_art.part_a is None
 
-    # Verify: All operations succeeded
-    successful = [r for r in results if r["success"]]
-    failed = [r for r in results if not r["success"]]
-
-    if failed:
-        for f in failed:
-            print(f"  Worker {f['worker_id']}: {f.get('error')}")
-
-    assert len(successful) == num_workers, f"{len(failed)} workers failed"
-
-    # Verify: Final artifact is consistent
-    final_artifact = json_store.load(artifact_id, include="all")
-    assert final_artifact.id == artifact_id
-    assert final_artifact.metadata is not None
-    assert final_artifact.metadata.checksum.startswith("worker-")
+    assert json_repo.exists(id)
+    json_repo.delete_artifact(id)
+    assert not json_repo.exists(id)
 
 
-# --- Helper functions ---
+def test_json_concurrent_writes(
+    json_repo: FsJsonTestRepo,
+    full_artifact: ArtifactTest,
+):
+    """Test thread-safety of json implementation."""
+    id = full_artifact.id
+    json_repo.save(full_artifact)
 
-
-def _worker_save_artifact(store_path: Path, artifact_id: str, worker_id: int) -> dict:
-    """Worker function to save an artifact (runs in separate process)."""
-    try:
-        store = FsJsonRepo(store_path, artifact_type=ArtifactTest)
-        artifact = ArtifactTest(
-            id=artifact_id,
-            metadata=ArtifactTestMetadata(
-                checksum=f"worker-{worker_id}",
-                audio_path=Path(f"/test/worker-{worker_id}.wav"),
-                duration=float(worker_id),
-            ),
+    def worker(i):
+        # Each worker updates metadata
+        full_artifact = json_repo.load(id)
+        full_artifact.metadata = ArtifactTestMetadata(
+            checksum=f"worker-{i}", audio_path=Path(f"/{i}")
         )
-        store.save(artifact)
-        return {"success": True, "worker_id": worker_id}
-    except Exception as e:
-        return {"success": False, "worker_id": worker_id, "error": str(e)}
+        json_repo.save(full_artifact, include=None)
+        return True
 
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(worker, i) for i in range(20)]
+        for f in as_completed(futures):
+            assert f.result() is True
 
-def _worker_read_artifact(store_path: Path, artifact_id: str, worker_id: int) -> dict:
-    try:
-        store = FsJsonRepo(store_path, artifact_type=ArtifactTest)
-        artifact = store.load(artifact_id, include="all")
-        assert artifact.id == artifact_id
-        return {"success": True, "worker_id": worker_id, "artifact_id": artifact.id}
-    except Exception as e:
-        return {"success": False, "worker_id": worker_id, "error": str(e)}
-
-
-def _worker_read_write_cycle(
-    store_path: Path, artifact_id: str, worker_id: int, iterations: int
-) -> dict:
-    """Worker that repeatedly reads and writes (runs in separate process)."""
-    try:
-        store = FsJsonRepo(store_path, artifact_type=ArtifactTest)
-        for i in range(iterations):
-            # Read
-            artifact = store.load(artifact_id)
-            # Modify
-            artifact.metadata.checksum = f"worker-{worker_id}-iter-{i}"
-            # Write back
-            store.save(artifact)
-            time.sleep(0.001)
-        return {"success": True, "worker_id": worker_id, "iterations": iterations}
-    except Exception as e:
-        return {"success": False, "worker_id": worker_id, "error": str(e)}
+    final = json_repo.load(id)
+    assert final.metadata.checksum.startswith("worker-")
