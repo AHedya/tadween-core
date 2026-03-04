@@ -14,3 +14,5 @@ wheels/
 .pytest_cache
 # graphs are high-resolution. use notebooks to generate again
 benchmark/results/*.png 
+*.db
+examples/repo/temp

@@ -1,3 +1,4 @@
+import random
 import shutil
 import tempfile
 from pathlib import Path
@@ -7,33 +8,71 @@ import pytest
 from tadween_core.repo import SqliteRepo
 from tadween_core.repo.json import FsJsonRepo
 
-from ._types import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart
+from ._types import (
+    ArtifactRoot,
+    ArtifactTest,
+    ArtifactTestMetadata,
+    ArtifactTestPart,
+    part_names,
+)
 
 
 @pytest.fixture
-def json_store():
+def json_repo():
     temp_dir = tempfile.mkdtemp()
-    # Explicitly use TestArtifact
     store = FsJsonRepo(Path(temp_dir), artifact_type=ArtifactTest)
     yield store
     shutil.rmtree(temp_dir)
 
 
 @pytest.fixture
-def sqlite_repo(tmp_path):
-    db_file = tmp_path / "test_tadween.db"
-    # Explicitly use TestArtifact
+def sqlite_repo(tmp_path) -> SqliteRepo[ArtifactTest, part_names]:
+    db_file = tmp_path / "test_sqlite_repo.db"
     return SqliteRepo(db_file, artifact_type=ArtifactTest)
 
 
 @pytest.fixture
-def full_artifact():
-    """Create a sample artifact for testing."""
+def artifact_metadata() -> ArtifactTestMetadata:
+    return ArtifactTestMetadata(
+        checksum="random checksum",
+        file_path=Path("/home/random_path"),
+        duration=random.randint(0, 20) + random.random(),
+    )
+
+
+@pytest.fixture
+def artifact_root() -> ArtifactRoot:
+    return ArtifactRoot(
+        stage=f"stage-{random.randint(1, 5)}",
+    )
+
+
+@pytest.fixture
+def partial_artifact() -> ArtifactTest:
     return ArtifactTest(
-        id="test-artifact-001",
-        metadata=ArtifactTestMetadata(
-            checksum="abc123", audio_path=Path("/test/audio.wav"), duration=120.0
+        root=ArtifactRoot(
+            stage=f"stage-{random.randint(1, 5)}",
         ),
-        part_a=ArtifactTestPart(content="data-a"),
-        part_b=ArtifactTestPart(content="data-b"),
+        metadata=ArtifactTestMetadata(
+            checksum="partial artifact metadata",
+            file_path=Path("/home/random_path"),
+            duration=random.randint(0, 20) + random.random(),
+        ),
+        part_a=ArtifactTestPart(),
+    )
+
+
+@pytest.fixture
+def full_artifact() -> ArtifactTest:
+    return ArtifactTest(
+        root=ArtifactRoot(
+            stage=f"stage-{random.randint(1, 5)}",
+        ),
+        metadata=ArtifactTestMetadata(
+            checksum="full artifact metadata",
+            file_path=Path("/home/random_path"),
+            duration=random.randint(0, 20) + random.random(),
+        ),
+        part_a=ArtifactTestPart(),
+        part_b=ArtifactTestPart(),
     )

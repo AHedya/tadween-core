@@ -1,33 +1,33 @@
+import time
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from tadween_core.types.artifact.base import ArtifactPart, BaseArtifact
+from tadween_core.types.artifact.base import ArtifactPart, BaseArtifact, RootModel
 
 
 class ArtifactTestPart(ArtifactPart):
     content: str = "test-content"
+    result: dict = {"res1": "this is a very huge result"}
 
 
 class ArtifactTestMetadata(BaseModel):
     checksum: str | None = None
-    audio_path: Path | None = None
+    file_path: Path | None = None
     duration: float | None = None
 
 
+class ArtifactRoot(RootModel):
+    stage: str
+    created_at: float = Field(default_factory=time.time)
+
+
 class ArtifactTest(BaseArtifact):
-    # Added to satisfy current SqliteRepo schema
-    current_stage: str = "created"
-    error_stage: str | None = None
+    root: ArtifactRoot
+    metadata: ArtifactTestMetadata
+    part_a: ArtifactTestPart
+    part_b: ArtifactTestPart
 
-    metadata: ArtifactTestMetadata | None = None
-    part_a: ArtifactTestPart | None = None
-    part_b: ArtifactTestPart | None = None
 
-    @classmethod
-    def get_part_map(cls) -> dict[str, type[ArtifactPart]]:
-        return {"part_a": ArtifactTestPart, "part_b": ArtifactTestPart}
-
-    @classmethod
-    def part_names(cls) -> frozenset[str]:
-        return frozenset(["part_a", "part_b"])
+part_names = Literal["part_a", "part_b"]

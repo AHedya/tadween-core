@@ -1,55 +1,79 @@
+import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
-from typing import (
-    Generic,
-    Literal,
-)
+from collections.abc import Iterable, Sequence
+from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel
-from typing_extensions import TypeVar
+from tadween_core.types.artifact import BaseArtifact
+from tadween_core.types.artifact.base import ArtifactPart
 
-from tadween_core.types.artifact.tadween import (
-    BaseArtifact,
-    PartName,
-    TadweenArtifact,
-)
-
-# Type variables
-# PartNameT must come first because ART has a default
-PartNameT = TypeVar("PartNameT", bound=str, default=str)
-# ART bounds BaseArtifact, defaults to TadweenArtifact
-ART = TypeVar("ART", bound=BaseArtifact, default=TadweenArtifact)
+PartNameT = TypeVar("PartNameT", bound=str)
+ART = TypeVar("ART", bound=BaseArtifact)
 
 
 class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
     """
     Abstract contract for Artifact Persistence.
-    Repository dealing with artifact parts atomically.
+
+    Responsibilities:
+    - Root fields (RootModel + eager BaseModel fields) are always persisted
+    together as one atomic unit — they are never partially saved.
+    - ArtifactPart fields are persisted individually and loaded on demand.
 
     Type Parameters:
-        ART: The artifact type (default: TadweenArtifact)
-        PartNameT: The part name type (default: PartName for TadweenArtifact)
+        ART: The artifact type
+        PartNameT: Literal of parts names
     """
 
-    def __init__(self, artifact_type: type[ART] | None = None):
+    def __init__(self, artifact_type: type[ART], logger: logging.Logger | None = None):
         """
         Initialize the repository.
 
         Args:
-            artifact_type: The artifact class to use. Defaults to TadweenArtifact.
+            artifact_type: The artifact class to use.
             Must implement get_part_map() method.
         """
-        self._artifact_type: type[ART] = artifact_type or TadweenArtifact
-        self._part_types = self._artifact_type.get_part_map()
+        self._artifact_type = artifact_type
+        self._part_map = self._artifact_type.get_part_map()
+        self._eager_map = self._artifact_type.get_eager_map()
+        self.logger = logger or logging.getLogger(self.__class__.__name__)
 
-    @abstractmethod
-    def create(self, artifact: ART) -> None:
-        """
-        Initialize a new artifact entry.
-        Should fail if ID already exists.
-        Only saves Root fields (id, status, metadata), ignores Parts.
-        """
-        pass
+    def _resolve_part_names(
+        self, include: Iterable[PartNameT] | Literal["all"] | None
+    ) -> list[str]:
+        """Translate an `include` argument into a concrete list of part names."""
+        if include is None:
+            return []
+        if include == "all":
+            return list(self._part_map)
+        names = list(include)
+        unknown = set(names) - self._part_map.keys()
+        if unknown:
+            raise ValueError(
+                f"Unknown part name(s) for {self._artifact_type.__name__}: {unknown}. "
+                f"Valid parts: {set(self._part_map)}"
+            )
+        return names
+
+    def _resolve_batch_part_names(
+        self,
+        include: Iterable[Iterable[PartNameT]] | Literal["all"] | None,
+        batch_len: int,
+    ) -> list[list[str]]:
+        """Helper for resolving input parts in batch mode."""
+        if include == "all":
+            return [self._resolve_part_names("all")] * batch_len
+        elif include is None:
+            return [[] for _ in range(batch_len)]
+
+        for inc in include:
+            names = list(inc)
+            unknown = set(names) - self._part_map.keys()
+            if unknown:
+                raise ValueError(
+                    f"Unknown part name(s) for {self._artifact_type.__name__}: {unknown}. "
+                    f"Valid parts: {set(self._part_map)}"
+                )
+        return include
 
     @abstractmethod
     def save(
@@ -58,13 +82,29 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
         include: Iterable[PartNameT] | Literal["all"] | None = "all",
     ) -> None:
         """
-        Batch save the artifact.
-        - include=None: Only saves root fields (status, etc).
-        - include="all": Saves root + all non-None parts.
-        - include=[...]: Saves root + specific parts.
+        Root + eager fields are always written.  Part behaviour is controlled
+        by ``include``:
 
-        Validates that included parts are valid for the artifact type.
+            include=None   - root/eager only; no part is touched.
+            include="all"  - root/eager + every non-None part on the object.
+            include=[...]  - root/eager + the listed parts (must be valid names).
+
+        Parts that are `None` on the object are always silently skipped,
+        leaving whatever is currently in storage untouched.
+        To explicitly remove parts, use delete_parts().
+
+        Raises:
+            ValueError: if any name in ``include`` is not a valid part.
         """
+        pass
+
+    @abstractmethod
+    def save_many(
+        self,
+        artifacts: Sequence[ART],
+        include: Sequence[Sequence[PartNameT]] | Literal["all"] | None = "all",
+    ) -> None:
+        """Batch interface for `save`"""
         pass
 
     @abstractmethod
@@ -72,43 +112,98 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
         self,
         artifact_id: str,
         include: Iterable[PartNameT] | Literal["all"] | None = None,
-    ) -> ART:
+        **options: Any,
+    ) -> ART | None:
         """
-        Batch load the artifact.
-        - include=None: Loads only root fields (parts will be None).
-        - include="all": Loads root + every part found in storage.
+        Load an artifact.
 
-        Validates loaded parts match expected schema.
+        Root + eager fields are always loaded.  Parts are controlled by
+        ``include`` (same semantics as ``save``).  Parts absent in storage
+        are returned as ``None`` on the artifact object.
+
+        Returns:
+            artifact object or None if not found
+
+        Raises:
+            ValueError: if any name in ``include`` is not a valid part.
         """
+        pass
+
+    @abstractmethod
+    def load_raw(
+        self,
+        artifact_id: str,
+        include: Iterable[PartNameT] | Literal["all"] | None = None,
+        **options: Any,
+    ) -> dict[str, Any] | None:
+        pass
+
+    @abstractmethod
+    def load_many(
+        self,
+        artifact_ids: Sequence[str],
+        include: Sequence[Sequence[PartNameT]] | Literal["all"] | None = None,
+        **options: Any,
+    ) -> dict[str, ART | None]:
+        """Batch interface for load."""
+        pass
+
+    @abstractmethod
+    def load_many_raw(
+        self,
+        artifact_ids: Sequence[str],
+        include: Sequence[Sequence[PartNameT]] | Literal["all"] | None = None,
+        **options: Any,
+    ) -> dict[str, dict[str, Any] | None]:
         pass
 
     @abstractmethod
     def save_part(
-        self, artifact_id: str, part_name: PartNameT, data: BaseModel
+        self, artifact_id: str, part_name: PartNameT, data: ArtifactPart
     ) -> None:
         """
-        Atomically save/overwrite a specific part.
-        Assumes the root artifact exists.
+        Atomically overwrite a single part.
+
+        Raises:
+            KeyError:   if the root artifact does not exist.
+            ValueError: if ``part_name`` is not valid for this artifact type.
         """
-        pass
 
     @abstractmethod
-    def load_part(self, artifact_id: str, part_name: PartNameT) -> BaseModel | None:
+    def load_part(self, artifact_id: str, part_name: PartNameT) -> ArtifactPart | None:
         """
-        Load a specific heavy part.
-        Returns None if the part does not exist yet.
+        Load a single part; returns ``None`` if it has never been saved.
+
+        Raises:
+            KeyError:   if the root artifact does not exist.
+            ValueError: if ``part_name`` is not valid for this artifact type.
         """
-        pass
 
     @abstractmethod
-    def delete(self, artifact_id: str) -> None:
-        pass
+    def delete_parts(
+        self,
+        artifact_id: str,
+        parts: Iterable[PartNameT] | Literal["all"],
+    ) -> None:
+        """
+        Remove stored parts without affecting the root or other parts.
+            parts="all"  - remove every stored part for this artifact.
+            parts=[...]  - remove only the listed parts.
+
+        Silently skips parts that were never saved.
+
+        Raises:
+            ValueError: if any name in ``parts`` is not valid.
+            KeyError: If artifact doesn't exist.
+        """
+
+    @abstractmethod
+    def delete_artifact(self, artifact_id: str) -> None:
+        """
+        Remove the root record and all associated parts.
+        No-op if the artifact does not exist.
+        """
 
     @abstractmethod
     def exists(self, artifact_id: str) -> bool:
-        """Check if root artifact record exists."""
-        pass
-
-
-# Default type alias for TadweenArtifact repository
-TadweenRepo = BaseArtifactRepo[TadweenArtifact, PartName]
+        """Return ``True`` if the root record is present in storage."""

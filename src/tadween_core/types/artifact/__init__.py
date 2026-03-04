@@ -1,18 +1,3 @@
-from .base import ArtifactPart, BaseArtifact
-from .tadween import (
-    ArtifactMetadata,
-    ASRResults,
-    LLMResult,
-    NormalizedContent,
-    TadweenArtifact,
-)
+from .base import ArtifactPart, BaseArtifact, RootModel
 
-__all__ = [
-    "ArtifactPart",
-    "BaseArtifact",
-    "TadweenArtifact",
-    "ArtifactMetadata",
-    "ASRResults",
-    "LLMResult",
-    "NormalizedContent",
-]
+__all__ = ["ArtifactPart", "BaseArtifact", "RootModel"]

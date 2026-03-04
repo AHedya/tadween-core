@@ -335,22 +335,3 @@ class StagePolicyBuilder(
             self._on_error_fn(message, error, broker)
         else:
             super().on_error(message, error, broker)
-
-
-# Type-aware factory function
-def create_stage_policy() -> StagePolicyBuilder[Any, Any, Any]:
-    """
-    Create a new stage policy builder with generic types.
-
-    For proper type checking, specify the generics explicitly:
-
-    Example:
-        # Typed version
-        policy = StagePolicyBuilder[MyInput, MyOutput, dict]().with_on_error(...)
-
-        # Or use create helper with explicit types
-        policy: StagePolicyBuilder[MyInput, MyOutput, dict] = create_stage_policy()
-        policy = policy.with_on_success(lambda tid, msg, result, **_: ...)
-        # 'result' will be typed as MyOutput
-    """
-    return StagePolicyBuilder()

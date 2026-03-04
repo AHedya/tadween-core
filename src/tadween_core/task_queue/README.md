@@ -25,6 +25,10 @@ The `task_queue` package provides a robust interface for asynchronous task execu
     └── thread_queue.py     => thread task queue implementation
 ```
 
+##  Usage Example
+
+*For examples, see [examples/task_queue/](../../../examples/task_queue/README.md)*
+
 ## Lifecycle Hooks
 
 A `TaskQueuePolicy` defines what happens at each stage of a task's life:
@@ -38,9 +42,4 @@ However, to save our task queue memory usage from growing so large, we pop the r
 You can control result consumption by setting the flag `retain_result` in either task queue constructor, or override default task queue behavior by setting `retain_result` in `submit` method.
 
 Optimally, using a task queue in a workflow, `retain_result` is set to False (default). And stage must modify `on_done` to instruct how to deal with the result: save to repository, fire event, or save to `Cache`.
-
-##  Usage Example
-
-*For examples, see [examples/task_queue/](../../../examples/task_queue/README.md) (if available).*
-
 
