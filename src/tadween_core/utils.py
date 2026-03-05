@@ -1,9 +1,12 @@
-def set_logger(force: bool = True):
+import logging
+
+
+def set_logger(level=logging.DEBUG, force: bool = True):
     import logging
     import sys
 
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=level,
         stream=sys.stdout,
         format="%(asctime)s:[%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",

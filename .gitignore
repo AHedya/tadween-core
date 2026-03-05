@@ -16,3 +16,5 @@ wheels/
 benchmark/results/*.png 
 *.db
 examples/repo/temp
+# notebooks in the root dir
+/*.ipynb

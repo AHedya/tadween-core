@@ -27,7 +27,7 @@ from tadween_core.handler.dummy import (  # noqa
     MockDownloadInput,
     MockDownloadOutput,
     NumpySumHandler,
-    PythonSumHandler,
+    PythonSumSquaresHandler,
     SumSquaresInput,
     SumSquaresOutput,
 )
@@ -101,7 +101,7 @@ def main():
 
     s2 = Stage(
         name="CPU-Bound",
-        handler=PythonSumHandler(),
+        handler=PythonSumSquaresHandler(),
         task_queue=init_queue("process", max_workers=3),
         policy=StagePolicyBuilder[SumSquaresInput, SumSquaresOutput, CacheSchema]()
         .with_resolve_inputs(

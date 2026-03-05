@@ -1,6 +1,5 @@
 from .policy import (
     DefaultStagePolicy,
-    ProcessingAction,
     StagePolicy,
     StagePolicyBuilder,
 )
@@ -11,5 +10,4 @@ __all__ = [
     "DefaultStagePolicy",
     "StagePolicy",
     "StagePolicyBuilder",
-    "ProcessingAction",
 ]

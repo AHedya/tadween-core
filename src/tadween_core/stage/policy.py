@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from enum import StrEnum, auto
 from typing import Annotated, Any, Generic, TypeAlias
 
 from pydantic import BaseModel
@@ -16,27 +15,31 @@ InputT = TypeVar("InputT", default=Any, bound=BaseModel)
 OutputT = TypeVar("OutputT", default=Any, bound=BaseModel)
 
 
-class ProcessingAction(StrEnum):
-    """Decision returned by on_submitted to control stage execution flow."""
-
-    PROCESS = auto()
-    """Normal execution: resolve inputs and run the handler."""
-
-    SKIP = auto()
-    """Skip handler execution: fire on_success with None result, treat as completed."""
-
-    CANCEL = auto()
-    """Cancel entirely: fire on_error, do not proceed with execution."""
-
-
 class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
     """
-    Defines the lifecycle and behavioral rules of a Stage.
+    Lifecycle contract for a Stage.
 
-    Responsibilities:
-    1. Input Resolution: Decides where data comes from (Cache -> Payload -> Repo).
-    2. Lifecycle Hooks: Defines behavior at submission, execution, and completion.
-    3. Output Persistence: Decides where results go (Save to Repo? Update Cache?).
+    A policy is composed of two kinds of methods:
+
+    Control methods: return values the Stage acts on:
+        - intercept(message, repo, cache) -> bool
+        - resolve_inputs(message, repo, cache) -> InputT | dict
+
+    Notification hooks: void, fired by the Stage at fixed points:
+        - on_running, on_done, on_success, on_error
+
+    Lifecycle order:
+        intercept
+        └── True:  stage stops. policy owns all further execution.
+        └── False:
+            resolve_inputs
+            on_running
+            on_done
+            on_success | on_error
+
+    Metadata contract:
+        `intercept` may freely mutate `message.metadata` to annotate the reason
+        for its decision (e.g. skip_reason, cache_hit).
     """
 
     @abstractmethod
@@ -46,34 +49,55 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
         repo: BaseArtifactRepo | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ) -> InputT | dict:
-        """Determine the input data for the Handler."""
+        """
+        Control hook: called after a False intercept, before task execution.
+        Composes the input that will be passed to the handler.
+
+        Returns:
+            InputT instance, or a dict that the stage will convert to InputT.
+
+        Raise an exception to abort execution. The stage will catch it,
+        wrap it in InputValidationError, and fire on_error.
+        """
         pass
 
     @abstractmethod
-    def on_submitted(
+    def intercept(
         self,
         message: Message,
+        broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo | None = None,
         cache: Cache[BucketSchemaT] | None = None,
-    ) -> ProcessingAction:
+    ) -> bool:
         """
-        Called immediately after the task is submitted to the queue (Main Process).
+        Control hook:  called first on every message. Determines whether the
+        stage workflow runs.
 
-        Return ProcessingAction:
-        - PROCESS: Normal execution (default)
-        - SKIP: Skip handler, fire on_success with None result
-        - CANCEL: Cancel entirely, fire on_error
+        Returns:
+        - False: not intercepted. Stage proceeds to resolve_inputs and execution.
+        - True:  intercepted. Stage halts. Policy is fully responsible for
+            what happens next. It may call on_success, on_error, mutate
+            metadata, publish to broker, or do nothing at all.
+        May mutate message.metadata to annotate the interception reason.
         """
-        return ProcessingAction.PROCESS
+        pass
 
     @abstractmethod
     def on_running(self, task_id: str, message: Message):
-        """Called when the task starts executing (Worker Process/Thread)."""
+        """
+        Notification hook — fired when the task begins execution in the worker.
+
+        Note: runs inside the worker thread or process, not the main process.
+        Any callable passed here must be picklable in process-based task queues.
+        """
         pass
 
     @abstractmethod
     def on_done(self, message: Message, envelope: TaskEnvelope[OutputT]):
-        """Called once the task finishes. Doesn't matter what the status is."""
+        """
+        Notification hook — fired when the task finishes, regardless of outcome.
+        Runs in the main process.
+        """
         pass
 
     @abstractmethod
@@ -86,7 +110,16 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
         repo: BaseArtifactRepo | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ):
-        """Called when the Handler completes successfully."""
+        """
+        Notification hook — fired when the handler completes successfully.
+
+        `result` is the OutputT returned by the handler. Use message.metadata
+        to determine context — for example, whether this was a cache hit set
+        by intercept — and branch persistence or publishing logic accordingly.
+
+        Raising an exception here will be caught by the stage, wrapped in
+        PolicyError, and re-fired through on_error.
+        """
         pass
 
     @abstractmethod
@@ -96,16 +129,32 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
         error: Exception,
         broker: BaseMessageBroker | None = None,
     ):
-        """Called when the Handler fails."""
+        """
+        Called when any failure occurs within the stage lifecycle.
+
+        The error type indicates the failure origin:
+        - HandlerError:         task-level failure (handler.run raised). Consider it for requeue
+        - InputValidationError: stage-level failure (input coercion failed).
+        - PolicyError:          stage-level failure (policy hook raised).
+        - StageError:           critical internal stage failure.
+
+        If task-level and stage-level failures require separate handling,
+        a future revision may introduce on_task_error / on_stage_error.
+        As of now, differentiation is the caller's responsibility via error type.
+        """
         pass
 
 
 class DefaultStagePolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
     """
-    Default implementation of StagePolicy with sensible defaults.
+    No-op implementation of StagePolicy.
 
-    - resolve_inputs: Returns message.payload if available, otherwise empty dict
-    - All lifecycle hooks: No-op (pass)
+    intercept:      always returns False (never intercepts).
+    resolve_inputs: returns message.payload, or empty dict if absent.
+    All hooks:      no-op.
+
+    Intended as a base class for policies that only need to override
+    a subset of hooks, and as the stage fallback when no policy is provided.
     """
 
     def resolve_inputs(
@@ -114,20 +163,18 @@ class DefaultStagePolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
         repo: BaseArtifactRepo | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ) -> InputT | dict:
-        """Return message payload or empty dict if not available."""
         return getattr(message, "payload", {})
 
-    def on_submitted(
+    def intercept(
         self,
         message: Message,
+        broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo | None = None,
         cache: Cache[BucketSchemaT] | None = None,
-    ) -> ProcessingAction:
-        """Default: always process the work."""
-        return ProcessingAction.PROCESS
+    ) -> bool:
+        return False
 
     def on_running(self, task_id: str, message: Message):
-        """No-op: Default behavior when task starts running."""
         pass
 
     def on_done(self, message: Message, envelope: TaskEnvelope[OutputT]):
@@ -142,7 +189,6 @@ class DefaultStagePolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
         repo: BaseArtifactRepo | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ):
-        """No-op: Default behavior on successful completion."""
         pass
 
     def on_error(
@@ -151,18 +197,23 @@ class DefaultStagePolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
         error: Exception,
         broker: BaseMessageBroker | None = None,
     ):
-        """No-op: Default behavior on error."""
         pass
 
 
 ## builder and factory function
-
 ResolveInputsFn: TypeAlias = Callable[
-    [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None], InputT | dict
+    [
+        Message,
+        BaseMessageBroker | None,
+        BaseArtifactRepo | None,
+        Cache[BucketSchemaT] | None,
+    ],
+    InputT | dict,
 ]
 
-OnSubmittedFn: TypeAlias = Callable[
-    [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None], ProcessingAction
+InterceptFn: TypeAlias = Callable[
+    [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None],
+    bool,
 ]
 
 OnRunningFn: TypeAlias = Callable[[Annotated[str, "task_id"], Message], None]
@@ -204,7 +255,7 @@ class StagePolicyBuilder(
     def __init__(self):
         super().__init__()
         self._resolve_inputs_fn: ResolveInputsFn | None = None
-        self._on_submitted_fn: OnSubmittedFn | None = None
+        self._intercept_fn: InterceptFn | None = None
         self._on_running_fn: OnRunningFn | None = None
         self._on_done_fn: OnDoneFn | None = None
         self._on_success_fn: OnSuccessFn | None = None
@@ -221,15 +272,15 @@ class StagePolicyBuilder(
         self._resolve_inputs_fn = fn
         return self
 
-    def with_on_submitted(
+    def with_intercept(
         self,
         fn: Callable[
             [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None],
-            ProcessingAction,
+            bool,
         ],
     ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT]":
-        """Override on_submitted hook to return ProcessingAction."""
-        self._on_submitted_fn = fn
+        """Override intercept hook."""
+        self._intercept_fn = fn
         return self
 
     def with_on_running(
@@ -277,8 +328,6 @@ class StagePolicyBuilder(
         self._on_error_fn = fn
         return self
 
-    # Implement StagePolicy interface using configured callbacks
-
     def resolve_inputs(
         self,
         message: Message,
@@ -289,15 +338,16 @@ class StagePolicyBuilder(
             return self._resolve_inputs_fn(message, repo, cache)
         return super().resolve_inputs(message, repo, cache)
 
-    def on_submitted(
+    def intercept(
         self,
         message: Message,
+        broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo | None = None,
         cache: Cache[BucketSchemaT] | None = None,
-    ) -> ProcessingAction:
-        if self._on_submitted_fn:
-            return self._on_submitted_fn(message, repo, cache)
-        return super().on_submitted(message, repo, cache)
+    ) -> bool:
+        if self._intercept_fn:
+            return self._intercept_fn(message, broker, repo, cache)
+        return super().intercept(message, broker, repo, cache)
 
     def on_running(self, task_id: str, message: Message):
         if self._on_running_fn:
