@@ -109,8 +109,8 @@ class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT]):
     def on_done(self, message, envelope):
         self._stage_policy.on_done(message, envelope)
 
-    def on_submitted(self, message: Message):
-        self._stage_policy.on_submitted(message)
+    def intercept(self, message: Message):
+        self._stage_policy.intercept(message)
 
     def on_running(self, task_id: str, message: Message):
         self._stage_policy.on_running(task_id, message)

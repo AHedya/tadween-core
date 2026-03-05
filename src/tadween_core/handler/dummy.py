@@ -434,14 +434,14 @@ class SumSquaresInput(BaseModel):
 
 class SumSquaresOutput(BaseModel):
     result: float = Field(..., description="The calculated sum of squares")
-    duration: float = Field(..., description="Time taken in seconds")
-    handler_type: str = Field(..., description="Type of implementation used")
+    duration: float = Field(0, description="Time taken in seconds")
+    handler_type: str = Field("", description="Type of implementation used")
 
     def __str__(self) -> str:
         return f"<SumSquaresOutput: Type: {self.handler_type} Duration: {self.duration:.3f} result: {self.result:,}>"
 
 
-class PythonSumHandler(BaseHandler[SumSquaresInput, SumSquaresOutput]):
+class PythonSumSquaresHandler(BaseHandler[SumSquaresInput, SumSquaresOutput]):
     """
     CPU-bound: Processes data using Python's native loops.
     The GIL is held throughout the entire execution.

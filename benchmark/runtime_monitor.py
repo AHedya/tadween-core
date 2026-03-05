@@ -30,7 +30,7 @@ from tadween_core.handler.dummy import (  # noqa
     MockDownloadInput,
     MockDownloadOutput,
     NumpySumHandler,
-    PythonSumHandler,
+    PythonSumSquaresHandler,
     SumSquaresInput,
     SumSquaresOutput,
 )
