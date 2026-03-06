@@ -1,13 +1,12 @@
 [project]
 name = "tadween-core"
 version = "0.0.1"
-description = "The core of the Tadween ecosystem. A modular, composable framework for building complex, stateful processing pipelines from simple linear chains to full DAG-based workflows"
+description = "`Tadween-core` is a modular, embedded micro-orchestrator designed for building complex, stateful processing pipelines from simple linear chains to full DAG-based workflows with zero external services required."
 authors = [{ name = "Abdulrahman Hedya", email = "abdohedya19@gmail.com" }]
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
 classifiers = [
-    "Private :: Do Not Upload",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

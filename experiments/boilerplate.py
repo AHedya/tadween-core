@@ -1,9 +1,9 @@
 import time
 
-from pydantic import BaseModel  # noqa
+from pydantic import BaseModel
 
 from tadween_core.broker import Message
-from tadween_core.handler import BaseHandler  # noqa
+from tadween_core.handler import BaseHandler
 
 
 class AddInput(BaseModel):
@@ -55,7 +55,7 @@ def wait_fn(seconds: float = 1):
 
 
 def make_handler(broker, publish_message):
-    def handler(msg: Message):
+    def handler(msg: Message):  # noqa: ARG001
         broker.publish(Message(**publish_message))
 
     return handler

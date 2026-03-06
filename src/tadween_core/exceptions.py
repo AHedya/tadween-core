@@ -10,7 +10,9 @@ class TadweenError(Exception):
         super().__init__(self.message)
 
     def __str__(self) -> str:
-        ctx_str = ", ".join(f"{k}={v}" for k, v in self.context.items() if v is not None)
+        ctx_str = ", ".join(
+            f"{k}={v}" for k, v in self.context.items() if v is not None
+        )
         if ctx_str:
             return f"{self.message} ({ctx_str})"
         return self.message
@@ -27,7 +29,12 @@ class PolicyError(StageError):
     """Errors occurring during policy execution."""
 
     def __init__(
-        self, message: str, stage_name: str, policy_name: str, method: str, **context: Any
+        self,
+        message: str,
+        stage_name: str,
+        policy_name: str,
+        method: str,
+        **context: Any,
     ):
         super().__init__(
             message,

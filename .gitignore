@@ -11,10 +11,13 @@ wheels/
 /data
 /models
 
-.pytest_cache
 # graphs are high-resolution. use notebooks to generate again
 benchmark/results/*.png 
 *.db
 examples/repo/temp
 # notebooks in the root dir
 /*.ipynb
+
+/.pytest_cache
+/.nox
+/.ruff_cache

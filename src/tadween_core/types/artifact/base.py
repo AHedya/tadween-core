@@ -95,20 +95,13 @@ class BaseArtifact(ABC, BaseModel):
         - BaseModel subclass    (eager)
         Raw primitives at artifact level are rejected — they belong in RootModel.
 
-        Pipe union (X | None) is allowed. Optional[X] / Union[X, None] is rejected
-        in favour of enforcing consistent pipe syntax.
         """
         for name, field_info in cls.model_fields.items():
             ann = field_info.annotation
             origin = get_origin(field_info.annotation)
 
-            if origin is Union:
-                raise TypeError(
-                    f"Field '{name}' on '{cls.__name__}': "
-                    f"use 'X | None' syntax instead of 'Optional[X]' or 'Union[X, None]'."
-                )
             # reject other subscripted types (list[str], dict[str, int], …)
-            if origin is not None and origin is not UnionType:
+            if origin is not None and not (origin is Union or origin is UnionType):
                 raise TypeError(
                     f"Field '{name}' on '{cls.__name__}': "
                     f"unsupported subscripted type '{origin}'."
