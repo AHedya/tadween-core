@@ -2,7 +2,7 @@
 Pytest test suite for the artifact contract (RootModel, ArtifactPart, BaseArtifact).
 """
 
-from enum import Enum
+import enum
 from typing import Literal
 from uuid import UUID
 
@@ -129,7 +129,7 @@ class TestBaseArtifactInvalidDefinitions:
 
         with pytest.raises(TypeError):
 
-            class StageEnum(Enum, str):
+            class StageEnum(enum.StrEnum):
                 INIT = "init"
                 FINISH = "finish"
 
@@ -162,7 +162,7 @@ class TestBaseArtifactInvalidDefinitions:
 
             class BadArtifact(BaseArtifact):
                 root: SimpleRoot
-                details: EagerDetails | EagerDetails | TextPart  # noqa: multi-union
+                details: EagerDetails | EagerDetails | TextPart
 
     def test_optional_root_rejected(self):
         with pytest.raises(TypeError, match="must not be optional"):

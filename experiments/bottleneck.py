@@ -105,9 +105,9 @@ def main():
         task_queue=init_queue("process", max_workers=3),
         policy=StagePolicyBuilder[SumSquaresInput, SumSquaresOutput, CacheSchema]()
         .with_resolve_inputs(
-            lambda msg, repo, cache: cache.get_bucket(
-                msg.metadata["artifact_id"]
-            ).s2_input
+            lambda msg, repo, cache: (
+                cache.get_bucket(msg.metadata["artifact_id"]).s2_input
+            )
         )
         .with_on_success(
             lambda tid, msg, res, broker, repo, cache: cache.set_entry(
@@ -133,9 +133,9 @@ def main():
             )
         )
         .with_resolve_inputs(
-            lambda msg, repo, cache: cache.get_bucket(
-                msg.metadata["artifact_id"]
-            ).s3_input
+            lambda msg, repo, cache: (
+                cache.get_bucket(msg.metadata["artifact_id"]).s3_input
+            )
         ),
     )
 

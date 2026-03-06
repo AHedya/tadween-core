@@ -349,7 +349,7 @@ def test_remaining_reads_preserved_on_update():
     _ = bucket.field1
 
     entry = cache.get_field_entry("key1", "field1")
-    initial_reads = entry.read_count
+    initial_reads = entry.read_count  # noqa: F841
 
     # Update the field
     bucket.field1 = "updated"

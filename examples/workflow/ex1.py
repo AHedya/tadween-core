@@ -94,9 +94,9 @@ def main():
         # Inline builder
         policy=StagePolicyBuilder[MockDownloadInput, SumSquaresOutput, CacheSchema]()
         .with_resolve_inputs(
-            lambda msg, repo, cache: cache.get_bucket(
-                msg.metadata["artifact_id"]
-            ).s3_input
+            lambda msg, repo, cache: (
+                cache.get_bucket(msg.metadata["artifact_id"]).s3_input
+            )
         )
         .with_on_done(
             lambda message, envelope: print(

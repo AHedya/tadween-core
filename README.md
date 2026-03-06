@@ -1,6 +1,6 @@
 # Tadween-core
 
-The heart of the Tadween ecosystem. A modular, composable framework for building complex, stateful processing pipelines — from simple linear chains to full DAG-based workflows
+`Tadween-core` is a modular, embedded micro-orchestrator designed for building complex, stateful processing pipelines from simple linear chains to full DAG-based workflows with zero external services required.
 
 ## Quick Start
 
@@ -38,6 +38,9 @@ Tadween-core is built on the principle that every step of a pipeline should be o
 - **Type-Safe**: Leveraging Pydantic for robust I/O and state management.
 - **Stateful**: Integrated caching and persistence layers.
 - **Concurrency-First**: Managed thread and process-based task queues resolve I/O and CPU bottlenecks by allowing stages to run in parallel where the DAG permits.
+
+Use Tadween-core if you are building a high-performance Product that needs to process heavy data concurrently on a
+single node with minimal overhead.
 
 ## System Architecture
 
