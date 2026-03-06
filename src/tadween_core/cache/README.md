@@ -31,7 +31,7 @@ Pydantic models are validated by fields not as a model. This is because partial 
 
 ## Usage Example
 
-*For more examples, see [examples/cache.py](../../../examples/cache/README.md).*
+*see [examples/cache.py](../../../examples/cache/README.md).*
 
 ## The Proxy & "Mirage Effect"
 

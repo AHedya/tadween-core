@@ -1,16 +1,12 @@
-# tadween_core/workflow/router.py
 from collections.abc import Callable
 from typing import Any
 
-from tadween_core.broker import BaseMessageBroker, Message
-from tadween_core.cache import Cache
+from tadween_core.broker import BaseMessageBroker
 from tadween_core.exceptions import PolicyError, RoutingError
-from tadween_core.handler import InputT, OutputT
-from tadween_core.repo.base import BaseArtifactRepo
-from tadween_core.stage.policy import StagePolicy
+from tadween_core.stage.policy import BucketSchemaT, InputT, OutputT, StagePolicy
 
 
-class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT]):
+class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
     """
     A Decorator Policy that handles the "Transport/Routing" layer of a workflow.
 
@@ -20,7 +16,7 @@ class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT]):
 
     def __init__(
         self,
-        stage_policy: StagePolicy[InputT, OutputT],
+        stage_policy: StagePolicy[InputT, OutputT, BucketSchemaT],
         output_topics: list[str],
         stage_name: str | None = None,
         broker: BaseMessageBroker | None = None,
@@ -34,32 +30,26 @@ class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT]):
         # Default: no payload passing
         self._payload_extractor = payload_extractor or (lambda x: {})
 
-    def resolve_inputs(
-        self,
-        message: Message,
-        repo: BaseArtifactRepo | None = None,
-        cache: Cache | None = None,
-    ):
-        # Delegate completely to the inner policy
+    def resolve_inputs(self, message, repo=None, cache=None):
         return self._stage_policy.resolve_inputs(message, repo, cache)
 
     def on_success(
         self,
-        task_id: str,
-        message: Message,
-        result: OutputT,
-        broker: BaseMessageBroker | None = None,
-        repo: BaseArtifactRepo | None = None,
-        cache: Cache | None = None,
+        task_id,
+        message,
+        result,
+        broker=None,
+        repo=None,
+        cache=None,
     ):
         active_broker = self._broker or broker
 
-        # Execute Inner Policy (e.g., Save to DB/Repo/cache)
+        # Execute Inner Policy (save to DB/Repo/cache)
         self._stage_policy.on_success(
             task_id, message, result, active_broker, repo, cache
         )
 
-        # Handle Routing (The "Glue" Logic)
+        # Routing (The "Glue" Logic)
         if active_broker and self._output_topics:
             try:
                 payload = self._payload_extractor(result)
@@ -72,13 +62,12 @@ class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT]):
                     task_id=task_id,
                 ) from e
 
+            # propagate metadata
             message.metadata.update({"parent_message_id": message.id})
 
             for topic in self._output_topics:
                 try:
-                    out_msg = Message(
-                        topic=topic, payload=payload, metadata=message.metadata
-                    )
+                    out_msg = message.fork(topic=topic, payload=payload)
                     active_broker.publish(out_msg)
                 except Exception as e:
                     raise RoutingError(
@@ -90,27 +79,26 @@ class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT]):
 
         # We do this here so the wrapper owns the "Unit of Work" completion
         if active_broker:
-            active_broker.ack(message)
+            active_broker.ack(message.id)
 
     def on_error(
         self,
-        message: Message,
-        error: Exception,
-        broker: BaseMessageBroker | None = None,
+        message,
+        error,
+        broker=None,
     ):
         active_broker = self._broker or broker
-
-        # Delegate cleanup/logging to inner policy
         self._stage_policy.on_error(message, error, active_broker)
 
         if active_broker:
-            active_broker.nack(message.id)
+            # TODO: Determine requeue mechanism and control
+            active_broker.nack(message.id, requeue_message=None)
 
     def on_done(self, message, envelope):
         self._stage_policy.on_done(message, envelope)
 
-    def intercept(self, message: Message):
-        self._stage_policy.intercept(message)
+    def intercept(self, message, broker=None, repo=None, cache=None):
+        self._stage_policy.intercept(message, broker, repo, cache)
 
-    def on_running(self, task_id: str, message: Message):
+    def on_running(self, task_id, message):
         self._stage_policy.on_running(task_id, message)

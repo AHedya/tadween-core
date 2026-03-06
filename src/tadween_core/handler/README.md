@@ -62,11 +62,12 @@ print(output.result)  # HELLO WORLD
 handler.shutdown()
 ```
 
+---
+*For more examples, see [examples/handler/](../../../examples/handler/README.md)*
+
 ## Why Factories?
 
 Handlers often contain non-picklable resources (e.g., loaded GPU models, database connections). `HandlerFactory` allows:
 - **Serialization**: Send a lightweight factory to a worker process instead of a heavy handler instance.
 - **Lifecycle Control**: Allow the worker process to control *when* heavy initialization happens.
 
----
-*For more examples, see [examples/handler/](../../../examples/handler/README.md)*
