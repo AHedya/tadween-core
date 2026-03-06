@@ -119,12 +119,12 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT]):
 
         # step4: enqueue
         callback = functools.partial(self._on_task_done, message)
-        on_running = functools.partial(self.policy.on_running, message)
+        # FIXME: `on_running` is currently disabled. Reason: not stable with process task queue.
+        # on_running = functools.partial(self.policy.on_running, message)
         task_id = self.task_queue.submit(
             fn=self.handler.run,
             on_done=callback,
             inputs=input_data,
-            on_running=on_running,
         )
 
         return task_id

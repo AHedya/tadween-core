@@ -1,56 +1,47 @@
-# Workflow & Stage
+# Workflow
 
-The `workflow` and `stage` packages provide the high-level orchestration logic for building and managing complex pipelines in Tadween.
+The `workflow` package orchestrates `Stage` objects into a Directed Acyclic Graph (DAG). It manages topology, message routing between stages, and lifecycle.
 
 ## Concepts
 
-- **Stage**: A building block of a `Workflow`. It contains a single `Handler`, a `StagePolicy`, and its own `TaskQueue`, `Repository`, and `Cache`.
-- **Workflow**: An orchestrator for `Stage` objects. It builds a Directed Acyclic Graph (DAG) and manages message routing between stages.
-- **StagePolicy**: A lifecycle object that determines stage-level behavior (e.g., whether to process, skip, or cancel a message).
-- **WorkflowRoutingPolicy**: A specialized policy that wraps a user's `StagePolicy` to handle message transport between stages.
+### Workflow
+the top-level orchestrator. Stages are registered, linked into a DAG (or linear pipeline),
+and wired to a broker during `build()`. After that, submitting a payload to the entry
+point topic triggers the full pipeline automatically.
 
-## Stage-Level Orchestration
+Topology constraints enforced at link time:
+- No fan-in: a stage may have at most one parent.
+- No cycles: the graph must remain acyclic.
 
-A `Stage` conducts a mini-orchestration of a single `Handler`'s execution:
-1. **Submit**: Check with the `StagePolicy` if the message should be processed.
-2. **Resolve**: Resolve inputs (from `Cache`, `Payload`, or `Repository`).
-3. **Execute**: Submit the task to the stage's `TaskQueue`.
-4. **Callback**: Trigger `StagePolicy` success or failure hooks when the task is done.
+### WorkflowRoutingPolicy
+A decorator that wraps any `StagePolicy` to add the
+transport layer. The user's policy handles domain concerns (persistence, caching,
+logging). The routing policy handles infrastructure concerns (ack/nack, publishing
+to the next stage's topic). The two layers never need to know about each other.
 
-## Usage Example
+Wrapping happens automatically inside `integrate_stage`. In other words, if you use workflow to manage stages, ***stages policies should never be routing-aware*** (ack/nack, publishing to the next stage's topic). 
 
-```python
-from tadween_core.workflow import Workflow
-from tadween_core.broker import InMemoryBroker
-from my_handlers import DownloadHandler, WhisperHandler
+## Lifecycle order (per stage, inside a workflow)
 
-# 1. Initialize core components
-broker = InMemoryBroker()
-workflow = Workflow(broker=broker, name="MyAudioPipeline")
+message arrives on broker topic
+1. Stage gets a message (`stage.submit_message(message)`)
+2. normal Stage lifecycle: intercept, resolve_inputs, handler, on_done
+3. WorkflowRoutingPolicy.on_success:
+    1. inner policy on_success   (domain: save, cache, metrics)
+    2. publish to output topics  (routing: forward to next stage)
+    3. broker.ack                (transport: mark message consumed)
+4. WorkflowRoutingPolicy.on_error:
+    1. inner policy on_error     (domain: log, alert)
+    2. broker.nack               (transport: reject message)
 
-# 2. Add and integrate stages
-workflow.add_stage("download", DownloadHandler())
-workflow.add_stage("transcribe", WhisperHandler())
+## Anatomy
 
-# 3. Link stages into a DAG
-workflow.link("download", "transcribe")
-workflow.set_entry_point("download")
+    └── workflow
+        ├── __init__.py
+        ├── router.py   -> WorkflowRoutingPolicy. Wraps user policy with routing layer.
+        ├── workflow.py -> Workflow. DAG builder, topology enforcement, lifecycle.
+        └── README.md
 
-# 4. Build and submit
-workflow.build()
-msg_id = workflow.submit({"url": "https://example.com/audio.mp3"})
+## Usage
 
-# 5. Cleanup
-workflow.close(timeout=5.0)
-```
-
-## Visualizing the Workflow
-
-Tadween workflows can be visualized using Graphviz or Mermaid:
-
-```python
-workflow.visualize("workflow.png", format="graphviz")
-```
-
----
-*For more examples, see [examples/workflow.py](../../../examples/workflow.py) (if available).*
+*See [examples/workflow/](../../../examples/workflow/README.md)*
