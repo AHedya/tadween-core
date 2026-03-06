@@ -13,7 +13,6 @@ Both of (`BaseModel`, `RootModel`) are eagerly loaded by the repository, while `
 - **BaseArtifact**: An abstract contract for any artifact object. `Repo` builds upon it
 - **RootModel**: `BaseModel` defines _artifact_ identity and quick access, filtration fields.
 - **ArtifactPart**: A base class for all heavy artifact parts. Inherit from this class to mark a field as a optional (default to None) and lazy-loaded part.
-- **TadweenArtifact**: The default artifact model. Battery-included.
 
 ## Anatomy
 
@@ -21,8 +20,7 @@ Both of (`BaseModel`, `RootModel`) are eagerly loaded by the repository, while `
 └── artifact
     ├── __init__.py
     ├── base.py     => Defines `BaseArtifact` and `ArtifactPart` contracts.
-    ├── README.md
-    └── tadween.py  => Defines `TadweenArtifact` and implements helpers.
+    └── README.md
 ```
 ## Lazy Loading 
 

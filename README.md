@@ -69,9 +69,6 @@ uv run pytest
 uv run pytest -v -s
 ```
 
-## Batteries Included: The Tadween Preset
-While tadween-core is generic, it provides a high-level "Audio-to-Text" implementation out of the box.
-
 ## The Backstory
 <details>
 <summary>The story of tadween-core</summary>
