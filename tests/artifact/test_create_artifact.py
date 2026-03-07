@@ -1,7 +1,3 @@
-"""
-Pytest test suite for the artifact contract (RootModel, ArtifactPart, BaseArtifact).
-"""
-
 import enum
 from typing import Literal
 from uuid import UUID

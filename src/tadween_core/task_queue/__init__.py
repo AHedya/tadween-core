@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from logging import Logger
+from multiprocessing.context import BaseContext
 from typing import Literal, TypeAlias, get_args, overload
 
 from .base_queue import BaseTaskPolicy, BaseTaskQueue
@@ -7,7 +8,7 @@ from .dynamic import DynamicTaskQueue, ExecutorType
 from .process_queue import ProcessTaskQueue
 from .thread_queue import ThreadTaskQueue
 
-QueueExecutorType: TypeAlias = Literal["thread", "process", "dynamic"]  # noqa: UP040
+QueueExecutorType: TypeAlias = Literal["thread", "process", "dynamic"]
 valid = ", ".join(get_args(QueueExecutorType))
 
 
@@ -29,6 +30,7 @@ def init_queue(
     executor: Literal["process"],
     *,
     name: str | None = None,
+    mp_context: BaseContext | str | None = None,
     max_workers: int | None = None,
     default_policy: type[BaseTaskPolicy] | None = None,
     logger: Logger | None = None,
@@ -75,6 +77,7 @@ def init_queue(
     logger: Logger | None = None,
     max_thread_workers: int | None = None,
     max_process_workers: int | None = None,
+    mp_context: BaseContext | str | None = None,
     initializer: Callable | None = None,
     initargs: tuple = (),
 ) -> BaseTaskQueue:
@@ -94,6 +97,7 @@ def init_queue(
             max_workers=max_workers,
             default_policy=default_policy,
             logger=logger,
+            mp_context=mp_context,
             initializer=initializer,
             initargs=initargs,
         )

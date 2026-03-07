@@ -229,8 +229,8 @@ class BaseTaskQueue(ABC, Generic[T]):
             done.clear()
 
     @abstractmethod
-    def close(self) -> None:
-        """Shutdown the task queue gracefully. ThreadPoolExecutor shutdown differs from ProcessPoolExecutor"""
+    def close(self, force: bool = False) -> None:
+        """Shutdown the task queue gracefully or forcibly."""
         pass
 
     def __repr__(self):

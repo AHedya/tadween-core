@@ -99,7 +99,7 @@ class DynamicTaskQueue(BaseTaskQueue):
 
         return cancelled
 
-    def close(self) -> None:
+    def close(self, force: bool = False) -> None:
         """Close both queues"""
-        self.thread_queue.close()
-        self.process_queue.close()
+        self.thread_queue.close(force=force)
+        self.process_queue.close(force=force)

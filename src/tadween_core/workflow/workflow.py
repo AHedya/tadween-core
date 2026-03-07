@@ -310,25 +310,20 @@ class Workflow:
         self.logger.critical(
             f"Workflow '{self.name}' life length exceeded. Killing workflow..."
         )
-        self.close(timeout=timeout)
+        self.close(timeout=timeout, force=True)
 
-    def close(self, timeout: float | None = None, join_timeout: float | None = None):
+    def close(self, timeout: float | None = None, force: bool = False):
         """Cleanup resources."""
         if self._timer:
             self._timer.cancel()
 
         self.logger.info(f"Closing workflow '{self.name}'...")
-
-        if hasattr(self.broker, "join"):
-            self.broker.join(join_timeout)
-
-        for stage in self._stages.values():
-            stage.close()
-
-        # Assuming the broker is scoped to the workflow or we are allowed to stop consuming.
         if hasattr(self.broker, "close"):
             # If InMemoryBroker, it's fine. If shared RabbitMQ connection, be careful.
-            self.broker.close(timeout)
+            self.broker.close(timeout=timeout, force=force)
+
+        for stage in self._stages.values():
+            stage.close(force=force)
 
     def visualize(
         self,

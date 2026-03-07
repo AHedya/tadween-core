@@ -29,9 +29,12 @@ class ThreadTaskQueue(BaseTaskQueue):
             max_workers=max_workers, initializer=initializer, initargs=initargs
         )
 
-    def close(self) -> None:
+    def close(self, force: bool = False) -> None:
         """Shutdown gracefully. Blocks the main thread"""
         self.logger.debug(f"Shutting down thread task queue [{self.name}]...")
         self._closed = True
-        self.executor.shutdown(wait=True)
+        if force:
+            self.executor.shutdown(wait=False, cancel_futures=True)
+        else:
+            self.executor.shutdown(wait=True)
         self.logger.debug(f"Thread task queue [{self.name}] shutdown complete")

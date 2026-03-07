@@ -3,6 +3,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from queue import Empty, Queue
 
 from .base import (
@@ -14,6 +15,8 @@ from .base import (
 
 logger = logging.getLogger(__name__)
 
+THREAD_EXIT_GRACE: float = 0.2
+
 
 class InMemoryBroker(BaseMessageBroker):
     """
@@ -21,15 +24,17 @@ class InMemoryBroker(BaseMessageBroker):
     NOT suitable for production (no persistence, loses messages on crash).
     """
 
-    def __init__(self):
+    def __init__(self, max_workers: int | None = None):
         self._topics: dict[str, Queue[Message]] = {}
-        # tuple[tuple[Callable,bool]] => a topic(str) could have many handlers. A handler is a callable, and a boolean that defines acknowledgement behavior: auto ack or manual ack
-        self._handlers: dict[str, tuple[tuple[Callable, bool]]] = {}
-        # subscription_id -> (topic, handler, auto_ack)
-        self._subscriptions: dict[str, tuple[str, Callable, bool]] = {}
+        # Each entry: (callable, auto_ack, handler_timeout)
+        self._handlers: dict[str, tuple[tuple[Callable, bool, float | None], ...]] = {}
+        # subscription_id -> (topic, handler, auto_ack, handler_timeout)
+        self._subscriptions: dict[str, tuple[str, Callable, bool, float | None]] = {}
         self._lock = threading.Lock()
         self._running = True
         self._dispatch_threads: dict[str, threading.Thread] = {}
+
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
         # Quiescence detection
         self._pending_acks: dict[str, int] = {}
@@ -39,6 +44,7 @@ class InMemoryBroker(BaseMessageBroker):
 
     def publish(self, message: Message) -> None:
         topic_created = False
+        thread_started = False
         with self._lock:
             if not self._running:
                 logger.warning("Broker already closed")
@@ -51,8 +57,14 @@ class InMemoryBroker(BaseMessageBroker):
                 topic_created = True
             self._topics[message.topic].put(message)
 
+            if message.topic not in self._dispatch_threads:
+                self._start_dispatch_thread(message.topic)
+                thread_started = True
+
         if topic_created:
             self._notify_listeners("on_topic_created", topic=message.topic)
+        if thread_started:
+            self._notify_listeners("on_dispatch_thread_started", topic=message.topic)
         self._notify_listeners("on_publish", message=message)
 
     def subscribe(
@@ -60,24 +72,42 @@ class InMemoryBroker(BaseMessageBroker):
         topic: str,
         handler: Callable[[Message], None],
         auto_ack: bool = True,
+        handler_timeout: float | None = None,
     ) -> str:
+        """
+        Subscribe *handler* to *topic*.
+
+        Parameters
+        ---
+        topic:
+            Topic to subscribe to.
+        handler:
+            Callable invoked for each message.
+        auto_ack:
+            When True (default) the message is acked automatically once the
+            handler completes or times out. Set to False for manual ack/nack.
+        handler_timeout:
+            Soft upper bound (seconds) on handler execution time. best-effort:
+            if the handler is still running after handler_timeout seconds we
+            ack defensively and log a warning, but the thread runs to
+            completion in the pool. None means no timeout, Dangerous if
+            the handler can block indefinitely.
+        """
         subscription_id = f"{topic}:{uuid.uuid4()}"
         thread_started = False
 
         with self._lock:
-            # copy-on-write
             current = self._handlers.get(topic, ())
-            self._handlers[topic] = current + ((handler, auto_ack),)
+            self._handlers[topic] = current + ((handler, auto_ack, handler_timeout),)
+            self._subscriptions[subscription_id] = (
+                topic,
+                handler,
+                auto_ack,
+                handler_timeout,
+            )
 
-            self._subscriptions[subscription_id] = (topic, handler, auto_ack)
-
-            # Start dispatch thread for this topic if not exists
             if topic not in self._dispatch_threads:
-                thread = threading.Thread(
-                    target=self._dispatch_loop, args=(topic,), daemon=False
-                )
-                thread.start()
-                self._dispatch_threads[topic] = thread
+                self._start_dispatch_thread(topic)
                 thread_started = True
 
         if thread_started:
@@ -90,67 +120,15 @@ class InMemoryBroker(BaseMessageBroker):
         )
         return subscription_id
 
-    def _dispatch_loop(self, topic: str):
-        """Dispatch messages to subscribers"""
-        while self._running:
-            try:
-                queue = self._topics.get(topic)
-                if not queue:
-                    time.sleep(0.1)
-                    continue
-                message = queue.get(timeout=0.1)
-                if message is None:
-                    break
-
-                self._notify_listeners(
-                    "on_message_dispatched", message=message, topic=topic
-                )
-
-                handlers = self._handlers.get(topic, ())
-                num_handlers = len(handlers)
-                with self._quiescence_cond:
-                    if num_handlers == 0:
-                        # No subscribers? Message is dead. Remove queue ref.
-                        self._pending_acks[message.id] -= 1
-                    else:
-                        # If we have 3 handlers, we remove 1 (queue) and add 3 (handlers)
-                        # Net change: +2
-                        # If we have 1 handler, Net change: 0
-                        self._pending_acks[message.id] += num_handlers - 1
-                    if self._pending_acks[message.id] <= 0:
-                        del self._pending_acks[message.id]
-                        if not self._pending_acks:
-                            self._quiescence_cond.notify_all()
-                for handler_func, auto_ack in handlers:
-                    try:
-                        handler_func(message)
-                        self._notify_listeners(
-                            "on_message_processed", message=message, topic=topic
-                        )
-                    except Exception as e:
-                        logger.error(f"Broker handler error: {e}", exc_info=True)
-                        self._notify_listeners(
-                            "on_message_failed", message=message, topic=topic, error=e
-                        )
-                    finally:
-                        if auto_ack:
-                            self.ack(message.id)
-                queue.task_done()
-            except Empty:
-                continue
-            except Exception as e:
-                logger.error(f"Dispatch loop error: {e}", exc_info=True)
-                continue
-
     def unsubscribe(self, subscription_id: str) -> None:
         with self._lock:
             if subscription_id not in self._subscriptions:
                 return
-            topic, handler, _ = self._subscriptions.pop(subscription_id)
+            topic, handler, *_ = self._subscriptions.pop(subscription_id)
 
             if topic in self._handlers:
                 self._handlers[topic] = tuple(
-                    [h for h in self._handlers[topic] if h is not handler]
+                    h for h in self._handlers[topic] if h[0] is not handler
                 )
                 if not self._handlers[topic]:
                     del self._handlers[topic]
@@ -160,42 +138,75 @@ class InMemoryBroker(BaseMessageBroker):
         )
 
     def join(self, timeout: float | None = None) -> bool:
-        """Blocks until pending_acks dictionary is empty."""
+        """Block until all pending acks are resolved (quiescence)."""
         with self._quiescence_cond:
-            success = self._quiescence_cond.wait_for(
+            return self._quiescence_cond.wait_for(
                 lambda: len(self._pending_acks) == 0, timeout=timeout
             )
-        return success
 
-    def close(self, timeout: float | None = None) -> None:
+    def close(self, timeout: float | None = None, force: bool = False) -> None:
+        """
+        Shut down the broker.
+
+        Parameters
+        ---
+        timeout:
+            Wall-clock budget (seconds) to wait for quiescence ONLY.
+            Dispatch thread have their own graceful timeout
+
+        force:
+            Skip waiting for quiescence: cancel queued handler futures, discard
+            all pending / un-acked messages, stop immediately.  Never raises.
+
+        Raises
+        ---
+        TimeoutError
+            Only on graceful close (force=False) when quiescence is not reached
+            within `timeout`.  Dispatch threads are signalled to stop before
+            the exception is raised so the broker is left in a clean state.
+        """
         if not self._running:
             logger.warning("Broker already closed. Quit")
             return
+
+        if force:
+            self._force_close()
+            return
+
         logger.info("Broker closing... waiting for pending tasks.")
 
-        self.join(timeout=timeout)
+        quiesced = self.join(timeout=timeout)
+        if not quiesced:
+            self._stop_dispatch_threads()
+            self._executor.shutdown(wait=False, cancel_futures=False)
+            raise TimeoutError(
+                "Broker close timed out waiting for quiescence; "
+                "un-acked messages remain. Use force=True to discard them."
+            )
 
+        self._stop_dispatch_threads()
         with self._lock:
-            self._running = False
             threads = list(self._dispatch_threads.values())
-        for t in threads:
-            t.join(timeout=timeout)
+        self._join_threads(threads)
+
+        # All handlers are already acked (quiescence confirmed above).
+        self._executor.shutdown(wait=False, cancel_futures=False)
         logger.info("Broker closed.")
 
     def ack(self, message_id: str) -> None:
-        """
-        Decrements the reference count for a specific message.
-        Validates that the message is actually pending.
+        """Decrement the pending-ack reference count for a message.
+
+        FIXME: The current implementation is not resilient to double-acks (e.g.
+        a manual-ack handler that also triggers auto-ack).  This is a known
+        limitation to be addressed in a future pass.
         """
         with self._quiescence_cond:
             if message_id not in self._pending_acks:
                 logger.warning(f"Double Ack or Unknown Message ID: {message_id}")
                 return
             self._pending_acks[message_id] -= 1
-
             if self._pending_acks[message_id] <= 0:
                 del self._pending_acks[message_id]
-                # If Dictionary is empty, the entire system is idle
                 if not self._pending_acks:
                     self._quiescence_cond.notify_all()
 
@@ -205,19 +216,236 @@ class InMemoryBroker(BaseMessageBroker):
             self.publish(requeue_message)
 
     def add_listener(self, listener: BrokerListener) -> None:
-        """Add a listener to receive broker events"""
         with self._lock:
             self._listeners.append(listener)
 
     def remove_listener(self, listener: BrokerListener) -> None:
-        """Remove a listener"""
         with self._lock:
             self._listeners.remove(listener)
 
+    def _start_dispatch_thread(self, topic: str) -> None:
+        """Start a dispatch thread for *topic*. Must be called under self._lock."""
+        if topic not in self._dispatch_threads:
+            thread = threading.Thread(
+                target=self._dispatch_loop, args=(topic,), daemon=False
+            )
+            thread.start()
+            self._dispatch_threads[topic] = thread
+
+    def _stop_dispatch_threads(self) -> None:
+        """
+        Set _running=False and post a None sentinel to every topic queue so
+        dispatch threads wake immediately instead of waiting polling.
+        """
+        with self._lock:
+            self._running = False
+            for q in self._topics.values():
+                q.put(None)
+
+    def _force_close(self) -> None:
+        """Discard all queued / pending-ack work and stop immediately. Never raises."""
+        logger.warning(
+            "Force-closing broker. Pending / un-acked messages will be dropped."
+        )
+        with self._quiescence_cond:
+            self._running = False
+            for q in self._topics.values():
+                while True:
+                    try:
+                        q.get_nowait()
+                        q.task_done()
+                    except Empty:
+                        break
+                q.put(None)
+            self._pending_acks.clear()
+            self._quiescence_cond.notify_all()
+
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        with self._lock:
+            threads = list(self._dispatch_threads.values())
+        self._join_threads(threads)
+        logger.info("Broker force-closed.")
+
+    def _join_threads(
+        self, threads: list[threading.Thread], timeout: float = THREAD_EXIT_GRACE
+    ) -> None:
+        """
+        Join every dispatch thread within a fixed grace window.
+        """
+        for t in threads:
+            t.join(timeout=timeout)
+            if t.is_alive():
+                logger.warning(
+                    f"Dispatch thread [{t.name}] did not stop within {timeout}s grace period. "
+                    "It will self-terminate once its current handler returns.",
+                )
+
+    def _make_done_callback(
+        self,
+        handler_func: Callable,
+        message: Message,
+        auto_ack: bool,
+        handler_timeout: float | None,
+        topic: str,
+        submitted_at: float,
+    ) -> Callable[[Future], None]:
+        """
+        Build and return the done_callback for a single handler submission.
+
+        Factored out of _submit_handler so each closure captures its own
+        distinct set of variables — avoids the classic loop-variable capture bug.
+
+        The callback runs in a pool worker thread (the same thread that ran
+        the handler, or any available worker for cancelled futures).  It is
+        responsible for:
+            - Detecting timeout by comparing elapsed time to handler_timeout
+            - Firing on_message_processed / on_message_failed notifications
+            - Ack-ing the message (auto_ack or timed_out or cancelled)
+        """
+
+        def done_callback(future: Future) -> None:
+            # Cancelled futures arise during force-close (cancel_futures=True).
+            if future.cancelled():
+                self.ack(message.id)
+                return
+
+            elapsed = time.monotonic() - submitted_at
+            timed_out = handler_timeout is not None and elapsed > handler_timeout
+            exc = future.exception()
+
+            if timed_out:
+                logger.warning(
+                    f"Handler {getattr(handler_func, '__qualname__', repr(handler_func))} exceeded timeout of {handler_timeout:.1f}s (actual: {elapsed:.1f}s) "
+                    f"on message(id:{message.id}) (topic={topic}). Acking defensively.",
+                )
+                self._notify_listeners(
+                    "on_message_failed",
+                    message=message,
+                    topic=topic,
+                    error=TimeoutError(
+                        f"Handler timed out after {elapsed:.1f}s "
+                        f"(limit: {handler_timeout}s)"
+                    ),
+                )
+            elif exc is not None:
+                logger.error(f"Broker handler error: {exc}")
+                self._notify_listeners(
+                    "on_message_failed", message=message, topic=topic, error=exc
+                )
+            else:
+                self._notify_listeners(
+                    "on_message_processed", message=message, topic=topic
+                )
+
+            if auto_ack or timed_out:
+                self.ack(message.id)
+
+        return done_callback
+
+    def _submit_handler(
+        self,
+        handler_func: Callable,
+        message: Message,
+        auto_ack: bool,
+        handler_timeout: float | None,
+        topic: str,
+    ) -> None:
+        """
+        Submit *handler_func* to the executor pool and attach a done_callback.
+
+        The dispatch loop calls this and moves on immediately. All post-execution logic
+        (acking, notifications, timeout detection) lives in the callback.
+
+        Raises
+            RuntimeError
+                if the executor has been shut down (broker closing).
+                The dispatch loop catches this and acks defensively.
+        """
+        submitted_at = time.monotonic()
+        callback = self._make_done_callback(
+            handler_func, message, auto_ack, handler_timeout, topic, submitted_at
+        )
+        self._executor.submit(handler_func, message).add_done_callback(callback)
+
+    def _dispatch_loop(self, topic: str) -> None:
+        """
+        Dispatch messages to subscribers for a single topic.
+
+        This loop is now a pure submission loop — it pulls a message from the
+        queue, adjusts pending_acks for fan-out, submits each handler to the
+        executor pool, and immediately moves to the next message.  No blocking
+        on handler execution.
+        """
+        while self._running:
+            try:
+                q = self._topics.get(topic)
+                if not q:
+                    time.sleep(0.1)
+                    continue
+                try:
+                    message = q.get(timeout=0.1)
+                except Empty:
+                    continue
+
+                if message is None:  # stop sentinel from _stop_dispatch_threads
+                    break
+
+                try:
+                    self._notify_listeners(
+                        "on_message_dispatched", message=message, topic=topic
+                    )
+
+                    with self._lock:
+                        handlers = self._handlers.get(topic, ())
+                        num_handlers = len(handlers)
+
+                    with self._quiescence_cond:
+                        if num_handlers == 0:
+                            # No subscribers — message is dead, clear its slot.
+                            self._pending_acks[message.id] -= 1
+                        else:
+                            # publish() added 1 for the queue slot.
+                            # Fan out to num_handlers. Net: +(num_handlers - 1)
+                            self._pending_acks[message.id] += num_handlers - 1
+                        if self._pending_acks.get(message.id, 0) <= 0:
+                            self._pending_acks.pop(message.id, None)
+                            if not self._pending_acks:
+                                self._quiescence_cond.notify_all()
+
+                    for handler_func, auto_ack, handler_timeout in handlers:
+                        try:
+                            self._submit_handler(
+                                handler_func, message, auto_ack, handler_timeout, topic
+                            )
+                        except RuntimeError:
+                            # Executor was shut down (broker closing mid-dispatch).
+                            # Ack defensively so this slot doesn't leak.
+                            logger.warning(
+                                "Executor shut down while submitting handler for "
+                                f"message(id={message.id}) — ack-ing defensively.",
+                            )
+                            self.ack(message.id)
+
+                except Exception as e:
+                    logger.error(
+                        f"Error processing message [{getattr(message, 'id', 'unknown')}]: {e}",
+                    )
+                    if message:
+                        self.ack(message.id)
+                finally:
+                    q.task_done()
+
+            except Exception as e:
+                logger.error(
+                    f"Dispatch loop critical error on topic {topic}: {e}",
+                )
+                continue
+
+        self._notify_listeners("on_dispatch_thread_stopped", topic=topic)
+
     def _notify_listeners(self, event: BrokerEvents, **kwargs) -> None:
-        """Observer pattern. Notify all listeners of an event"""
         for listener in self._listeners:
             try:
                 getattr(listener, event)(**kwargs)
             except Exception as e:
-                logger.error(f"Listener error in {event}: {e}", exc_info=True)
+                logger.error(f"Listener error in {event}: {e}")

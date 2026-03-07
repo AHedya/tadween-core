@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from _types import (
+from my_artifact import (
     AudioArtifact,
     AudioMetadata,
     AudioRoot,

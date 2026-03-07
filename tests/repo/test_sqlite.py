@@ -6,7 +6,12 @@ import pytest  # noqa
 
 from tadween_core.repo import SqliteRepo
 
-from .._types import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart, part_names  # noqa
+from ..shared_types import (
+    ArtifactTest,
+    ArtifactTestMetadata,
+    ArtifactTestPart,
+    part_names,
+)
 
 SqliteTestRepo: TypeAlias = SqliteRepo[ArtifactTest, part_names]
 
