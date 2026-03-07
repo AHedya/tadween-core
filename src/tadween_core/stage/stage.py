@@ -4,7 +4,6 @@ from logging import Logger, getLogger
 from typing import Any, Generic, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel, ValidationError
-from typing_extensions import TypeVar
 
 from tadween_core.broker import BaseMessageBroker, Message
 from tadween_core.cache import Cache
@@ -14,23 +13,30 @@ from tadween_core.exceptions import (
     PolicyError,
     StageError,
 )
-from tadween_core.handler.base import BaseHandler, InputT, OutputT
+from tadween_core.handler.base import BaseHandler
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.task_queue import BaseTaskQueue, init_queue
 from tadween_core.task_queue.base import TaskEnvelope
 
-from .policy import DefaultStagePolicy, StagePolicy
+from .policy import (
+    ArtifactT,
+    BucketSchemaT,
+    DefaultStagePolicy,
+    InputT,
+    OutputT,
+    PartNameT,
+    StagePolicy,
+)
 
-BucketSchemaT = TypeVar("BucketSchemaT", default=Any)
 
-
-class Stage(Generic[InputT, OutputT, BucketSchemaT]):
+class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
     def __init__(
         self,
         handler: BaseHandler[InputT, OutputT],
         *,
         name: str | None = None,
-        policy: StagePolicy[InputT, OutputT, BucketSchemaT] | None = None,
+        policy: StagePolicy[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]
+        | None = None,
         repo: BaseArtifactRepo | None = None,
         cache: Cache[BucketSchemaT] | None = None,
         logger: Logger | None = None,

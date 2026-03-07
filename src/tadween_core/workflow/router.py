@@ -3,10 +3,19 @@ from typing import Any
 
 from tadween_core.broker import BaseMessageBroker
 from tadween_core.exceptions import PolicyError, RoutingError
-from tadween_core.stage.policy import BucketSchemaT, InputT, OutputT, StagePolicy
+from tadween_core.stage.policy import (
+    ArtifactT,
+    BucketSchemaT,
+    InputT,
+    OutputT,
+    PartNameT,
+    StagePolicy,
+)
 
 
-class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
+class WorkflowRoutingPolicy(
+    StagePolicy[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]
+):
     """
     A Decorator Policy that handles the "Transport/Routing" layer of a workflow.
 
@@ -16,7 +25,7 @@ class WorkflowRoutingPolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
 
     def __init__(
         self,
-        stage_policy: StagePolicy[InputT, OutputT, BucketSchemaT],
+        stage_policy: StagePolicy[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT],
         output_topics: list[str],
         stage_name: str | None = None,
         broker: BaseMessageBroker | None = None,
