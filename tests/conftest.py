@@ -8,7 +8,7 @@ import pytest
 from tadween_core.repo import SqliteRepo
 from tadween_core.repo.json import FsJsonRepo
 
-from ._types import (
+from .shared_types import (
     ArtifactRoot,
     ArtifactTest,
     ArtifactTestMetadata,

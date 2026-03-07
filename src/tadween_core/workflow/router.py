@@ -86,7 +86,9 @@ class WorkflowRoutingPolicy(
                         task_id=task_id,
                     ) from e
 
-        # We do this here so the wrapper owns the "Unit of Work" completion
+        # We do this here so the wrapper owns the "Unit of Work" completion.
+        # If any of the above (inner policy or routing) failed, Stage._on_task_done
+        # will catch it and call on_error, which will call nack() -> ack().
         if active_broker:
             active_broker.ack(message.id)
 
@@ -97,11 +99,12 @@ class WorkflowRoutingPolicy(
         broker=None,
     ):
         active_broker = self._broker or broker
-        self._stage_policy.on_error(message, error, active_broker)
-
-        if active_broker:
-            # TODO: Determine requeue mechanism and control
-            active_broker.nack(message.id, requeue_message=None)
+        try:
+            self._stage_policy.on_error(message, error, active_broker)
+        finally:
+            if active_broker:
+                # TODO: Determine requeue mechanism and control
+                active_broker.nack(message.id, requeue_message=None)
 
     def on_done(self, message, envelope):
         self._stage_policy.on_done(message, envelope)

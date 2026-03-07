@@ -24,7 +24,7 @@ def lint(session):
 
 
 @nox.session(python=["3.11", "3.12", "3.13", "3.14"], tags=["examples"])
-def run_examples(session):
+def examples(session):
     session.run_install(
         "uv",
         "pip",

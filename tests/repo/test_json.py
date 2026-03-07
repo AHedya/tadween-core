@@ -6,7 +6,12 @@ import pytest  # noqa
 
 from tadween_core.repo.json import FsJsonRepo
 
-from .._types import ArtifactTest, ArtifactTestMetadata, ArtifactTestPart, part_names  # noqa
+from ..shared_types import (
+    ArtifactTest,
+    ArtifactTestMetadata,
+    ArtifactTestPart,
+    part_names,
+)
 
 FsJsonTestRepo: TypeAlias = FsJsonRepo[ArtifactTest, part_names]
 

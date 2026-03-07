@@ -264,10 +264,10 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         )
         return None
 
-    def close(self):
+    def close(self, force: bool = False):
         """Cleanup stage resources"""
         self.handler.shutdown()
-        self.task_queue.close()
+        self.task_queue.close(force=force)
 
     def _enforce_input_type(self, raw_input: Any) -> InputT:
         """

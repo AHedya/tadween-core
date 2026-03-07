@@ -122,7 +122,9 @@ def main():
                 metadata={"artifact_id": str(i)},
             )
     finally:
-        wf.close(3)
+        # Wait indefinitely if you're sure nothing would go wrong.
+        # Else, put approximated timeout with force=True
+        wf.close()
 
     print(f"Done at {time.perf_counter() - begin:.6f}.")
 

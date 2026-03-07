@@ -1,8 +1,30 @@
 import logging
+import multiprocessing as mp
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
+from multiprocessing.context import BaseContext
 
 from .base_queue import BaseTaskPolicy, BaseTaskQueue
+
+
+def _resolve_mp_context(mp_context: BaseContext | str | None) -> BaseContext:
+    """
+    Resolve an mp_context parameter into an actual multiprocessing BaseContext.
+    multiprocessing.get_context() (platform default) on failure.
+    """
+    if isinstance(mp_context, str):
+        try:
+            return mp.get_context(mp_context)
+        except Exception:
+            return mp.get_context()
+    elif mp_context is None:
+        # default to 'spawn' for safety in multi-threaded environments
+        try:
+            return mp.get_context("spawn")
+        except Exception:
+            return mp.get_context()
+    else:
+        return mp_context
 
 
 class ProcessTaskQueue(BaseTaskQueue):
@@ -11,6 +33,7 @@ class ProcessTaskQueue(BaseTaskQueue):
     def __init__(
         self,
         name: str | None = None,
+        mp_context: BaseContext | str | None = None,
         max_workers: int | None = None,
         default_policy: BaseTaskPolicy | None = None,
         retain_results: bool = False,
@@ -24,9 +47,12 @@ class ProcessTaskQueue(BaseTaskQueue):
             default_policy=default_policy,
             retain_results=retain_results,
         )  # CRITICAL: Initialize base class
-
+        mp_context = _resolve_mp_context(mp_context)
         self.executor = ProcessPoolExecutor(
-            max_workers=max_workers, initializer=initializer, initargs=initargs
+            max_workers=max_workers,
+            initializer=initializer,
+            initargs=initargs,
+            mp_context=mp_context,
         )
 
     def close(self, force: bool = False) -> None:
@@ -36,9 +62,11 @@ class ProcessTaskQueue(BaseTaskQueue):
         self._closed = True
         if force:
             try:
-                for pid, process in list(self.executor._processes.items()):
+                # concurrent.futures uses internal _processes attribute
+                processes = getattr(self.executor, "_processes", {})
+                for pid, process in list(processes.items()):
                     process.terminate()
-                    self.logger.warning(f"force-terminate workers: {pid}")
+                    self.logger.warning(f"force-terminate worker: {pid}")
 
             except Exception as e:
                 self.logger.warning(f"Failed to force-terminate workers: {e}")

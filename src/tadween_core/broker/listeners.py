@@ -115,6 +115,9 @@ class StatsCollector(BrokerListener):
         with self._lock:
             self._active_threads.add(topic)
 
+    def on_dispatch_thread_stopped(self, topic: str) -> None:
+        pass
+
     def get_stats(self) -> BrokerStats:
         """
         Generate current statistics snapshot.

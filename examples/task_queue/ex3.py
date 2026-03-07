@@ -12,24 +12,31 @@ def calculate_sum_squares(n_elements=25_000_000):
     return result
 
 
-thread_queue = init_queue("thread", max_workers=4)
+def main():
+    thread_queue = init_queue("thread", max_workers=4)
 
-begin = time.perf_counter()
-for _ in range(4):
-    thread_queue.submit(fn=calculate_sum_squares)
-thread_queue.wait_all()
+    begin = time.perf_counter()
+    for _ in range(4):
+        thread_queue.submit(fn=calculate_sum_squares)
+    thread_queue.wait_all()
 
-end = time.perf_counter()
-# It takes so long in thread queue. It offers no true parallelism due to GIL.
-print(f"Thread queue finished after: {end - begin:.3f}")
+    end = time.perf_counter()
+    # It takes so long in thread queue. It offers no true parallelism due to GIL.
+    print(f"Thread queue finished after: {end - begin:.3f}")
 
-# Same setup, but using process based executor.
-process_queue = init_queue("process", max_workers=4)
+    # Same setup, but using process based executor.
+    # IMPORTANT: You need make your main module safe for multiprocessing.
+    # Put in consideration what context/start_method your workflow and/or code needs
+    process_queue = init_queue("process", max_workers=4, mp_context="fork")
 
-begin = time.perf_counter()
-for _ in range(4):
-    process_queue.submit(fn=calculate_sum_squares)
-process_queue.wait_all()
+    begin = time.perf_counter()
+    for _ in range(4):
+        process_queue.submit(fn=calculate_sum_squares)
+    process_queue.wait_all()
 
-end = time.perf_counter()
-print(f"process queue finished after: {end - begin:.3f}")
+    end = time.perf_counter()
+    print(f"process queue finished after: {end - begin:.3f}")
+
+
+if __name__ == "__main__":
+    main()

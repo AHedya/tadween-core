@@ -189,3 +189,8 @@ class BrokerListener(ABC):
     def on_dispatch_thread_started(self, topic: str) -> None:
         """Called when a dispatch thread starts for a topic"""
         pass
+
+    @abstractmethod
+    def on_dispatch_thread_stopped(self, topic: str) -> None:
+        """Called when a dispatch thread stops for a topic"""
+        pass
