@@ -9,13 +9,16 @@ from tadween_core.broker import BaseMessageBroker, Message
 from tadween_core.cache.cache import Cache
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.task_queue.base import TaskEnvelope
+from tadween_core.types.artifact.base import BaseArtifact
 
+ArtifactT = TypeVar("ArtifactT", default=Any, bound=BaseArtifact)
+PartNameT = TypeVar("PartNameT", default=str, bound=str)
 BucketSchemaT = TypeVar("BucketSchemaT", default=Any)
 InputT = TypeVar("InputT", default=Any, bound=BaseModel)
 OutputT = TypeVar("OutputT", default=Any, bound=BaseModel)
 
 
-class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
+class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
     """
     Lifecycle contract for a Stage.
 
@@ -46,7 +49,7 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
     def resolve_inputs(
         self,
         message: Message,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ) -> InputT | dict:
         """
@@ -66,7 +69,7 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
         self,
         message: Message,
         broker: BaseMessageBroker | None = None,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ) -> bool:
         """
@@ -107,7 +110,7 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
         message: Message,
         result: OutputT,
         broker: BaseMessageBroker | None = None,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ):
         """
@@ -145,7 +148,9 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT]):
         pass
 
 
-class DefaultStagePolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
+class DefaultStagePolicy(
+    StagePolicy[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]
+):
     """
     No-op implementation of StagePolicy.
 
@@ -160,7 +165,7 @@ class DefaultStagePolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
     def resolve_inputs(
         self,
         message: Message,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ) -> InputT | dict:
         return getattr(message, "payload", {})
@@ -169,7 +174,7 @@ class DefaultStagePolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
         self,
         message: Message,
         broker: BaseMessageBroker | None = None,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ) -> bool:
         return False
@@ -186,7 +191,7 @@ class DefaultStagePolicy(StagePolicy[InputT, OutputT, BucketSchemaT]):
         message: Message,
         result: OutputT,
         broker: BaseMessageBroker | None = None,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ):
         pass
@@ -205,14 +210,18 @@ ResolveInputsFn: TypeAlias = Callable[
     [
         Message,
         BaseMessageBroker | None,
-        BaseArtifactRepo | None,
+        BaseArtifactRepo[ArtifactT, PartNameT] | None,
         Cache[BucketSchemaT] | None,
     ],
     InputT | dict,
 ]
 
 InterceptFn: TypeAlias = Callable[
-    [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None],
+    [
+        Message,
+        BaseArtifactRepo[ArtifactT, PartNameT] | None,
+        Cache[BucketSchemaT] | None,
+    ],
     bool,
 ]
 
@@ -226,7 +235,7 @@ OnSuccessFn: TypeAlias = Callable[
         Message,
         OutputT,
         BaseMessageBroker | None,
-        BaseArtifactRepo | None,
+        BaseArtifactRepo[ArtifactT, PartNameT] | None,
         Cache[BucketSchemaT] | None,
     ],
     None,
@@ -236,8 +245,8 @@ OnErrorFn: TypeAlias = Callable[[Message, Exception, BaseMessageBroker | None], 
 
 
 class StagePolicyBuilder(
-    DefaultStagePolicy[InputT, OutputT, BucketSchemaT],
-    Generic[InputT, OutputT, BucketSchemaT],
+    DefaultStagePolicy[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT],
+    Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT],
 ):
     """
     Builder for creating StagePolicy instances with custom lifecycle hooks.
@@ -267,7 +276,7 @@ class StagePolicyBuilder(
             [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None],
             InputT | dict,
         ],
-    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT]":
+    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":
         """Override input resolution logic. Returns InputT or dict."""
         self._resolve_inputs_fn = fn
         return self
@@ -278,21 +287,21 @@ class StagePolicyBuilder(
             [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None],
             bool,
         ],
-    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT]":
+    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":
         """Override intercept hook."""
         self._intercept_fn = fn
         return self
 
     def with_on_running(
         self, fn: Callable[[str, Message], None]
-    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT]":
+    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":
         """Override on_running hook."""
         self._on_running_fn = fn
         return self
 
     def with_on_done(
         self, fn: Callable[[Message, TaskEnvelope[OutputT]], None]
-    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT]":
+    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":
         """Override on_done hook. Envelope contains OutputT."""
         self._on_done_fn = fn
         return self
@@ -310,7 +319,7 @@ class StagePolicyBuilder(
             ],
             None,
         ],
-    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT]":
+    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":
         """
         Override on_success hook.
 
@@ -323,7 +332,7 @@ class StagePolicyBuilder(
     def with_on_error(
         self,
         fn: Callable[[Message, Exception, BaseMessageBroker | None], None],
-    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT]":
+    ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":
         """Override on_error hook."""
         self._on_error_fn = fn
         return self
@@ -331,7 +340,7 @@ class StagePolicyBuilder(
     def resolve_inputs(
         self,
         message: Message,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ) -> InputT | dict:
         if self._resolve_inputs_fn:
@@ -342,7 +351,7 @@ class StagePolicyBuilder(
         self,
         message: Message,
         broker: BaseMessageBroker | None = None,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ) -> bool:
         if self._intercept_fn:
@@ -367,7 +376,7 @@ class StagePolicyBuilder(
         message: Message,
         result: OutputT,
         broker: BaseMessageBroker | None = None,
-        repo: BaseArtifactRepo | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
     ):
         if self._on_success_fn:
