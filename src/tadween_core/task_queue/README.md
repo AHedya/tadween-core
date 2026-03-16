@@ -10,7 +10,7 @@ The `task_queue` package provides a robust interface for asynchronous task execu
 - **BaseTaskPolicy**: A lifecycle object that defines hooks for task submission, running, and completion.
 
 ## Anatomy
-`handler` subpackage anatomy:
+`task_queue` subpackage anatomy:
 
 ```
 └── task_queue
