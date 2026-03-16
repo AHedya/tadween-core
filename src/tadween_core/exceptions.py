@@ -64,3 +64,13 @@ class RoutingError(StageError):
 
     def __init__(self, message: str, stage_name: str, **context: Any):
         super().__init__(message, stage_name=stage_name, **context)
+
+
+class RepoError(TadweenError):
+    def __init__(self, message: str, **context: Any):
+        super().__init__(message, **context)
+
+
+class S3InitError(RepoError):
+    def __init__(self, message: str, **context: Any):
+        super().__init__(message, **context)

@@ -43,7 +43,7 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
     def __init__(
         self,
         db_path: str | Path,
-        artifact_type: type[ART] | None = None,
+        artifact_type: type[ART],
     ):
         super().__init__(artifact_type)
         self.db_path = str(db_path)
@@ -112,11 +112,13 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
 
     def _extract_root_row(self, artifact: ART) -> dict[str, str]:
         """Flattens the artifact into a dictionary matching the root table columns."""
+        # we use model dump because the schema expects columns
         row = artifact.root.model_dump(mode="json")
-        # Eager models as JSON
+        # Eager models as JSON string
         for name in self._eager_map:
             val = getattr(artifact, name)
             if val is not None:
+                # here we use dump_json as it's saved as a string
                 row[name] = val.model_dump_json()
         return row
 
