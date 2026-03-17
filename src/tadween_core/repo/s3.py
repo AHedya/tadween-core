@@ -1,15 +1,18 @@
 try:
     import boto3
+    from boto3.s3.transfer import TransferConfig
     from botocore.config import Config
     from botocore.exceptions import (
         ClientError,
         EndpointResolutionError,
         NoCredentialsError,
     )
+
 except ImportError:
     raise ImportError("Can't' import boto3. install s3 extension `tadween-core[s3]`")
-
 import contextlib
+import gzip
+import io
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -20,6 +23,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from tadween_core.exceptions import S3InitError
 
 from .base import ART, BaseArtifactRepo, PartNameT
+
+MB = 1024 * 1024
 
 
 class S3ClientConfig(BaseModel):
@@ -49,26 +54,53 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
         self,
         artifact_type: type[ART],
         bucket_id: str,
-        prefix: str = "",
+        prefix: str,
         boto_client: Any | None = None,
         client_config: S3ClientConfig | None = None,
+        compress_threshold_bytes: int = 1 * MB,
+        multipart_threshold_bytes: int = 5 * MB,
     ):
+        """
+        Args:
+            artifact_type (type[ART]): Artifact type
+            bucket_id (str): Bucket name
+            prefix (str): Repository prefix (batch_id)
+            boto_client (Any | None, optional): Injected boto S3 client. Defaults to None.
+            client_config (S3ClientConfig | None, optional): S3 client config. Defaults to None.
+            compress_threshold_bytes (int, optional): compress threshold. Any item greater value will be compressed. Defaults to 1*MB.
+            multipart_threshold_bytes (int, optional): Triggers multipart mechanism. Item size must be greater than the value .Defaults to 5*MB.
+        Raises:
+            ValueError: When neither of `boto_client` nor `client_config` is passed. Or prefix is not a valid string
+        """
         if boto_client is None and client_config is None:
             raise ValueError(
                 "Can't have both the client and config set to `None`. Pass either of them"
             )
+        if not prefix:
+            raise ValueError("Prefix can't be None nor empty")
 
         super().__init__(artifact_type)
 
         self._client = boto_client or boto3.client("s3", client_config.boto_kwargs())
         self._bucket_id = bucket_id
         self._prefix = prefix.rstrip("/")
+        self._compress_threshold = compress_threshold_bytes
+        self._multipart_threshold = multipart_threshold_bytes
 
         preflight_check(self._client, self._bucket_id, True, self.logger, self._prefix)
 
         self._pool = ThreadPoolExecutor(
             max_workers=self._client.meta.config.max_pool_connections,
             thread_name_prefix="S3Repo-",
+        )
+        self._TRANSFER_SINGLE = TransferConfig(
+            multipart_threshold=self._multipart_threshold,
+            use_threads=False,
+        )
+        self._TRANSFER_LARGE = TransferConfig(
+            multipart_threshold=self._multipart_threshold,
+            max_concurrency=2,
+            use_threads=True,
         )
 
     def save_many(self, artifacts, include="all", wait=True) -> None:
@@ -218,21 +250,56 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
             raise
 
     def _put(self, key: str, body: str) -> None:
-        self._client.put_object(
-            Bucket=self._bucket_id,
-            Key=key,
-            Body=body,
-            ContentType="application/json",
+        body = body.encode()
+        size = len(body)
+
+        if size > self._compress_threshold:
+            body = gzip.compress(body, compresslevel=6)
+            args = {
+                "ContentType": "application/json",
+                "ContentEncoding": "gzip",
+            }
+        else:
+            args = {"ContentType": "application/json"}
+
+        self._client.upload_fileobj(
+            io.BytesIO(body),
+            self._bucket_id,
+            key,
+            ExtraArgs=args,
+            Config=self._select_transfer_config(size),
         )
 
     def _get(self, key: str) -> str | None:
         try:
-            resp = self._client.get_object(Bucket=self._bucket_id, Key=key)
-            return resp["Body"].read().decode()
+            head = self._client.head_object(Bucket=self._bucket_id, Key=key)
         except ClientError as exc:
             if exc.response["Error"]["Code"] in ("NoSuchKey", "404"):
                 return None
             raise
+
+        size = head["ContentLength"]
+        is_gzip = (
+            head.get("ContentEncoding") == "gzip"
+            or head.get("Metadata", {}).get("compression") == "gzip"
+        )
+
+        buf = io.BytesIO()
+        self._client.download_fileobj(
+            self._bucket_id,
+            key,
+            buf,
+            Config=self._select_transfer_config(size),
+        )
+        raw = buf.getvalue()
+        return gzip.decompress(raw).decode() if is_gzip else raw.decode()
+
+    def _select_transfer_config(self, size: int) -> TransferConfig:
+        return (
+            self._TRANSFER_LARGE
+            if size >= self._multipart_threshold
+            else self._TRANSFER_SINGLE
+        )
 
     def _serialize_root(self, artifact: ART) -> str:
         return artifact.model_dump_json(exclude=self._part_map.keys())
