@@ -18,19 +18,21 @@ class BucketProxy(Generic[T]):
     `_on_read` and `_on_write` are hooks passed by the `Cache` object to update the `BucketProxy` instance on read/write
     """
 
-    __slots__ = ("_internal", "_adapter", "_on_read", "_on_write")
+    __slots__ = ("_internal", "_adapter", "_on_read", "_on_write", "_on_evict")
 
     def __init__(
         self,
         internal_map: dict[str, CacheEntry[Any]],
         adapter: SchemaAdapter,
         on_read: Callable[[str, CacheEntry[Any]], Any] | None = None,
-        on_write: Callable[[str, Any, int | None, int | None], None] | None = None,
+        on_write: Callable[[str, Any, int | None], None] | None = None,
+        on_evict: Callable[[str], bool] | None = None,
     ) -> None:
         object.__setattr__(self, "_internal", internal_map)
         object.__setattr__(self, "_adapter", adapter)
         object.__setattr__(self, "_on_read", on_read)
         object.__setattr__(self, "_on_write", on_write)
+        object.__setattr__(self, "_on_evict", on_evict)
 
     def __getattr__(self, name: str) -> Any:
         internal: dict[str, CacheEntry[Any]] = object.__getattribute__(
@@ -119,6 +121,32 @@ class BucketProxy(Generic[T]):
                 f"'{adapter.schema_type.__name__}' has no attribute '{field_name}'"
             )
         return internal[field_name]
+
+    def __delattr__(self, name: str) -> None:
+        """Manually evict a field's value."""
+        self.evict(name)
+
+    def evict(self, field_name: str) -> bool:
+
+        internal: dict[str, CacheEntry[Any]] = object.__getattribute__(
+            self, "_internal"
+        )
+        if field_name in internal:
+            on_evict = object.__getattribute__(self, "_on_evict")
+            if on_evict:
+                return on_evict(field_name)
+
+            # Fallback if no callback (unlikely in Cache context)
+            entry = internal[field_name]
+            if entry.value is not None:
+                entry.update(None)
+                return True
+            return False
+
+        adapter: SchemaAdapter = object.__getattribute__(self, "_adapter")
+        raise AttributeError(
+            f"'{adapter.schema_type.__name__}' has no attribute '{field_name}'"
+        )
 
     def __repr__(self) -> str:
         adapter: SchemaAdapter = object.__getattribute__(self, "_adapter")
