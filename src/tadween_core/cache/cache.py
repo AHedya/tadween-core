@@ -146,6 +146,30 @@ class Cache(Generic[BucketSchemaT]):
             return True
         return False
 
+    def evict_bucket(self, key: str) -> bool:
+        """Alias for delete_bucket."""
+        return self.delete_bucket(key)
+
+    def evict_entry(self, key: str, field_name: str) -> bool:
+        """
+        Manually evict a specific field's value from a bucket.
+        Returns:
+            True if evicted, False if not found or already empty
+        """
+        internal = self._store.get(key)
+        if internal is None or field_name not in internal:
+            return False
+
+        entry = internal[field_name]
+        if entry.value is None:
+            return False
+
+        old_size = entry.size
+        entry.update(None)
+        self._bucket_sizes[key] -= old_size - entry.size
+        self._bucket_last_accessed[key] = time.perf_counter()
+        return True
+
     def keys(self) -> list[str]:
         """Return all cache keys."""
         return list(self._store.keys())
@@ -271,14 +295,20 @@ class Cache(Generic[BucketSchemaT]):
 
         val = entry.value
 
-        # 2. Check remaining reads - Lazy
+        # 2. Check remaining reads
         if entry.remaining_reads is not None:
             if entry.remaining_reads < 0:
+                # Quota was already exhausted in a previous read
+                return None
+
+            if entry.remaining_reads == 0:
+                # Quota just reached zero with this read.
+                # Evict now to save memory, but return the value for this final read.
                 if val is not None:
                     old_size = entry.size
-                    entry.update(None, remaining_reads=entry.remaining_reads)
+                    entry.update(None, remaining_reads=0)
                     self._bucket_sizes[key] -= old_size - entry.size
-                return None
+                return val
 
         return val
 
@@ -331,7 +361,16 @@ class Cache(Generic[BucketSchemaT]):
                 quota=quota,
             )
 
-        return BucketProxy(internal, self._adapter, on_read=on_read, on_write=on_write)
+        def on_evict(field_name: str) -> bool:
+            return self.evict_entry(key, field_name)
+
+        return BucketProxy(
+            internal,
+            self._adapter,
+            on_read=on_read,
+            on_write=on_write,
+            on_evict=on_evict,
+        )
 
     def clear(self) -> None:
         """Remove all buckets from the cache."""

@@ -13,7 +13,7 @@ Pydantic models are validated by fields not as a model. This is because partial 
 - **Adapters**: Adapter to transform schema into cached model. Supports `pydantic.BaseModel`, and `dataclasses.dataclass`
 - **Bucket**: A cached instance of a schema, accessible by a unique key.
 - **BucketProxy**: A runtime proxy that mimics the schema type while managing metadata and eviction.
-- **CacheEntry**: A runtime schema fields wrapper. It encapsulates actual field/attribute data with some caching related metadata (number of read, remaining reads, size), and functionalities (touch, update)
+- **CacheEntry**: A runtime schema fields wrapper. It encapsulates actual field/attribute data with some caching related metadata (number of read, remaining reads, size), and functionalities (touch, update, evict).
 - **CachePolicy**: Defines size limits, TTL, and eviction strategies.
 
 ## Anatomy
@@ -24,7 +24,7 @@ Pydantic models are validated by fields not as a model. This is because partial 
     ├── adapter.py  => Defines `SchemaAdapter` contract, implements `DataclassAdapter`, `PydanticAdapter` and adapter factory
     ├── base.py     => Intended for shared types. Only defines `CacheEntry`
     ├── cache.py    => Implements the generic `Cache`, and eviction logic
-    ├── policy.py   => Defies policy data model. Not the actual policy behavior
+    ├── policy.py   => Defines policy data model. Not the actual policy behavior
     ├── proxy.py    => Defines `BucketProxy`
     └── README.md
 ```
@@ -39,7 +39,15 @@ The cache returns `BucketProxy[MySchema] | MySchema`. This serves as a warning t
 
 - **Ergonomics**: Provides full type-hints for schema fields and proxy methods.
 - **Lazy Loading**: Accessing a field via the proxy tracks its metadata and read counts.
+- **Manual Eviction**: You can immediately free memory by calling `del proxy.field` or `proxy.evict("field_name")`.
 - **Honesty**: If you need a true instance (e.g., for Pydantic validation), call `proxy.to_instance()`.
+
+## Manual Eviction & Deletion
+
+The system supports immediate, on-demand eviction to free memory without waiting for policy triggers:
+- **Bucket Level**: `cache.delete_bucket(key)` or `cache.evict_bucket(key)`.
+- **Entry Level (via Cache)**: `cache.evict_entry(key, "field_name")`.
+- **Entry Level (via Proxy)**: `del proxy.field_name` or `proxy.evict("field_name")`.
 
 ## Eviction Strategies
 
@@ -47,4 +55,5 @@ Supports various strategies to manage cache size:
 - **LRU (Least Recently Used)**: Evict the least recently accessed bucket or entry.
 - **LFU (Least Frequently Used)**: Evict the least frequently accessed bucket or entry.
 - **FIFO (First-In, First-Out)**: Evict the oldest bucket or entry.
-- **Read Quota**: Evict buckets or entries after they have been read a certain number of times.
+- **Read Quota**: Evict buckets or entries after they have been read a certain number of times. 
+  ***Immediate Eviction***: When the read quota reaches zero, the memory is freed *during* that final read attempt. Subsequent reads return `None`.
