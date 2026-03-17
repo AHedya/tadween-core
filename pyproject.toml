@@ -61,4 +61,11 @@ ignore = [
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
 
-# TODO: move pytest.ini into [tool.pytest.ini_options]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+pythonpath = ["src"]        
+[tool.pytest_env]
+TESTING = "1"
