@@ -26,6 +26,9 @@ from .base import ART, BaseArtifactRepo, PartNameT
 
 MB = 1024 * 1024
 
+_CT_JSON = "application/json"
+_CT_BLOB = "application/octet-stream "
+
 
 class S3ClientConfig(BaseModel):
     access_key: str = Field(serialization_alias="aws_access_key_id")
@@ -106,17 +109,23 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
     def save_many(self, artifacts, include="all", wait=True) -> None:
         include = self._resolve_batch_part_names(include, len(artifacts))
 
-        tasks: list[tuple[str, str]] = []
+        tasks: list[tuple[str, bytes, str]] = []  # (key, body, content_type)
         for art, parts_included in zip(artifacts, include, strict=True):
-            tasks.append((self._get_root_key(art.id), self._serialize_root(art)))
+            tasks.append(
+                (self._get_root_key(art.id), self._serialize_root(art), _CT_JSON)
+            )
             for part in parts_included:
                 val = getattr(art, part)
                 if val is None:
                     self.logger.warning(f"{art.id}: part [{part}] is None — skipping.")
                     continue
-                tasks.append((self._get_part_key(art.id, part), val.model_dump_json()))
+                tasks.append(
+                    (self._get_part_key(art.id, part), val.serialize(), _CT_BLOB)
+                )
 
-        futures = [self._pool.submit(self._put, key, body) for key, body in tasks]
+        futures = [
+            self._pool.submit(self._put, key, body, ct) for key, body, ct in tasks
+        ]
         if wait:
             for f in futures:
                 f.result()
@@ -143,7 +152,9 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
         expected = self._part_map[part_name]
         if not isinstance(data, expected):
             raise TypeError(f"Expected {expected.__name__}, got {type(data).__name__}.")
-        self._put(self._get_part_key(artifact_id, part_name), data.model_dump_json())
+        self._put(
+            self._get_part_key(artifact_id, part_name), data.serialize(), _CT_BLOB
+        )
 
     def load_many(self, artifact_ids, include=None, **options) -> dict[str, ART]:
         raw_results = self.load_many_raw(artifact_ids, include=include, **options)
@@ -158,7 +169,7 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
             for part_name, part_raw in raw.items():
                 if part_raw is None or part_name == "root":
                     continue
-                part_value = self._part_map[part_name].model_validate_json(part_raw)
+                part_value = self._part_map[part_name].deserialize(part_raw)
                 # skip re-validation
                 object.__setattr__(combined, part_name, part_value)
                 combined.__pydantic_fields_set__.add(part_name)
@@ -220,7 +231,7 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
         raw = self._get(self._get_part_key(artifact_id, part_name))
         if raw is None:
             return None
-        return self._part_map[part_name].model_validate_json(raw)
+        return self._part_map[part_name].deserialize(raw)
 
     def delete_parts(self, artifact_id, parts) -> None:
         part_names = self._resolve_part_names(parts)
@@ -249,28 +260,24 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
                 return False
             raise
 
-    def _put(self, key: str, body: str) -> None:
-        body = body.encode()
+    def _put(self, key: str, body: bytes, content_type: str = _CT_JSON) -> None:
         size = len(body)
 
         if size > self._compress_threshold:
             body = gzip.compress(body, compresslevel=6)
-            args = {
-                "ContentType": "application/json",
-                "ContentEncoding": "gzip",
-            }
+            extra_args = {"ContentType": content_type, "ContentEncoding": "gzip"}
         else:
-            args = {"ContentType": "application/json"}
+            extra_args = {"ContentType": content_type}
 
         self._client.upload_fileobj(
             io.BytesIO(body),
             self._bucket_id,
             key,
-            ExtraArgs=args,
+            ExtraArgs=extra_args,
             Config=self._select_transfer_config(size),
         )
 
-    def _get(self, key: str) -> str | None:
+    def _get(self, key: str) -> bytes | None:
         try:
             head = self._client.head_object(Bucket=self._bucket_id, Key=key)
         except ClientError as exc:
@@ -292,7 +299,7 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
             Config=self._select_transfer_config(size),
         )
         raw = buf.getvalue()
-        return gzip.decompress(raw).decode() if is_gzip else raw.decode()
+        return gzip.decompress(raw) if is_gzip else raw
 
     def _select_transfer_config(self, size: int) -> TransferConfig:
         return (
@@ -301,14 +308,14 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
             else self._TRANSFER_SINGLE
         )
 
-    def _serialize_root(self, artifact: ART) -> str:
-        return artifact.model_dump_json(exclude=self._part_map.keys())
+    def _serialize_root(self, artifact: ART) -> bytes:
+        return artifact.model_dump_json(exclude=self._part_map.keys()).encode()
 
     def _get_root_key(self, artifact_id: str) -> str:
         return f"{self._prefix}/{artifact_id}/root.json"
 
     def _get_part_key(self, artifact_id: str, part_name: str) -> str:
-        return f"{self._prefix}/{artifact_id}/parts/{part_name}.json"
+        return f"{self._prefix}/{artifact_id}/parts/{part_name}.bin"
 
     def _delete_many(self, keys: list[str]) -> None:
         for i in range(0, len(keys), 1000):

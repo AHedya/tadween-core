@@ -10,7 +10,6 @@ from uuid import UUID
 
 from tadween_core.repo.base import ART, BaseArtifactRepo, PartNameT
 from tadween_core.types.artifact.base import (
-    ArtifactPart,
     RootModel,
 )
 
@@ -21,6 +20,7 @@ _PY_TO_SQLITE: dict[type, str] = {
     bool: "INTEGER",
     UUID: "TEXT",
     Enum: "TEXT",
+    bytes: "BLOB",
 }
 
 
@@ -118,7 +118,7 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
         for name in self._eager_map:
             val = getattr(artifact, name)
             if val is not None:
-                # here we use dump_json as it's saved as a string
+                # here we use dump_json as eagers are saved as strings
                 row[name] = val.model_dump_json()
         return row
 
@@ -156,7 +156,7 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
         for k, v in lazy_data.items():
             if v is None:
                 continue
-            model_dict[k] = self._part_map.get(k).model_validate_json(v)
+            model_dict[k] = self._part_map.get(k).deserialize(v)
         return self._artifact_type.model_validate(model_dict)
 
     @_write_locked
@@ -164,8 +164,8 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
         include = self._resolve_batch_part_names(include, batch_len=len(artifacts))
 
         root_rows = []
-        # part_name -> list[tuple(artifact_id,data)]
-        part_table_rows: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        # part_name -> list[tuple(artifact_id,data)]. Data is json string for root, and blobs for the eager.
+        part_table_rows: dict[str, list[tuple[str, str | bytes]]] = defaultdict(list)
 
         for art, inc in zip(artifacts, include, strict=True):
             root_rows.append(self._extract_root_row(art))
@@ -177,7 +177,7 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
                         f"is trying to save part [{part_included}] with `None` value. Skipping"
                     )
                     continue
-                part_table_rows[part_included].append((art.id, value.model_dump_json()))
+                part_table_rows[part_included].append((art.id, value.serialize()))
 
         if not root_rows:
             return
@@ -238,7 +238,7 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
         self,
         artifact_id,
         part_name,
-    ) -> ArtifactPart | None:
+    ):
         if part_name not in self._part_map:
             raise ValueError(
                 f"Unknown part {part_name} for {self._artifact_type.__name__}. "
@@ -256,7 +256,7 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
             ).fetchone()
         if row is None:
             return None
-        return self._part_map[part_name].model_validate_json(row[0])
+        return self._part_map[part_name].deserialize(row[0])
 
     @_write_locked
     def save_part(
@@ -288,7 +288,7 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
                 INSERT INTO {table} (artifact_id, data) VALUES (?, ?)
                 ON CONFLICT(artifact_id) DO UPDATE SET data = excluded.data
                 """,
-                (artifact_id, data.model_dump_json()),
+                (artifact_id, data.serialize()),
             )
 
     @_write_locked

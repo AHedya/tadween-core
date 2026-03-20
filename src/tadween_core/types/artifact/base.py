@@ -3,8 +3,10 @@ from types import UnionType
 from typing import Any, Literal, Optional, Union, get_args, get_origin
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo
+
+from .part import BaseArtifactPart
 
 _PRIMITIVES: frozenset[type] = frozenset({str, int, float, bool})
 
@@ -41,29 +43,19 @@ class RootModel(BaseModel):
         }
 
 
-class ArtifactPart(BaseModel):
-    """Base class for all heavy artifact parts.
-    Inherit from this class to mark a field as a lazy-loaded part.
-
-    You'd need to implement custom serialization/validation logic if you use arbitrary/custom types.
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-
 class BaseArtifact(ABC, BaseModel):
     """
     Strict contract for artifacts.
 
     Allowed fields types:
     - `RootModel`: A must
-    - `ArtifactPart`: optional
+    - `BaseArtifactPart`: optional
     - `BaseModel`: optional
 
     Composes:
     - Exactly one RootModel     -> flat record (always loaded)
     - Any BaseModel fields      -> eagerly loaded. Never optional
-    - Any ArtifactPart fields   -> lazy-loaded, auto-optional
+    - Any BaseArtifactPart fields   -> lazy-loaded, auto-optional
     """
 
     root: RootModel
@@ -79,19 +71,21 @@ class BaseArtifact(ABC, BaseModel):
         for name, field_info in list(cls.model_fields.items()):
             # guard against extra optional and defaulted part
             ann = _inner_type(field_info.annotation)
-            if isinstance(ann, type) and issubclass(ann, ArtifactPart):
+            if isinstance(ann, type) and issubclass(ann, BaseArtifactPart):
                 cls.model_fields[name] = FieldInfo(
                     default=None,
                     annotation=ann | None,
                 )
         cls.model_rebuild(force=True)
 
+    # DEBT: defaulted parts are set to None.
+    # TODO: Keep default value for artifact part if set.
     @classmethod
     def _validate_fields(cls) -> None:
         """
         Validates that all artifact-level fields are one of:
         - RootModel subclass    (eager)
-        - ArtifactPart subclass (lazy, auto-optional)
+        - BaseArtifactPart subclass (lazy, auto-optional)
         - BaseModel subclass    (eager)
         Raw primitives at artifact level are rejected — they belong in RootModel.
 
@@ -123,7 +117,7 @@ class BaseArtifact(ABC, BaseModel):
             if not (isinstance(inner, type) and issubclass(inner, BaseModel)):
                 raise TypeError(
                     f"Field '{name}' on '{cls.__name__}' must be a RootModel, "
-                    f"ArtifactPart, or BaseModel subclass. "
+                    f"BaseArtifactPart, or BaseModel subclass. "
                     f"Primitives belong inside RootModel. Got: {inner}"
                 )
 
@@ -132,7 +126,7 @@ class BaseArtifact(ABC, BaseModel):
                     raise TypeError(
                         f"Root field on '{cls.__name__}' must not be optional. Remove '| None'."
                     )
-                if not issubclass(inner, ArtifactPart):
+                if not issubclass(inner, BaseArtifactPart):
                     # Plain eager BaseModel — must not be optional
                     raise TypeError(
                         f"Field '{name}' on '{cls.__name__}': "
@@ -140,12 +134,12 @@ class BaseArtifact(ABC, BaseModel):
                     )
 
     @classmethod
-    def get_part_map(cls) -> dict[str, type[ArtifactPart]]:
+    def get_part_map(cls) -> dict[str, type[BaseArtifactPart]]:
         """Lazy-loaded fields (auto-optional)"""
         return {
             name: _inner_type(field.annotation)
             for name, field in cls.model_fields.items()
-            if issubclass(_inner_type(field.annotation), ArtifactPart)
+            if issubclass(_inner_type(field.annotation), BaseArtifactPart)
         }
 
     @classmethod
@@ -155,7 +149,9 @@ class BaseArtifact(ABC, BaseModel):
             name: _inner_type(field.annotation)
             for name, field in cls.model_fields.items()
             if issubclass(_inner_type(field.annotation), BaseModel)
-            and not issubclass(_inner_type(field.annotation), (ArtifactPart, RootModel))
+            and not issubclass(
+                _inner_type(field.annotation), (BaseArtifactPart, RootModel)
+            )
         }
 
     @property
@@ -185,7 +181,7 @@ def _resolve_storage_type(annotation: Any) -> type:
 
     Resolution order:
     1. Annotation is a plain primitive     → returned as-is
-    2. Annotation is ``Literal[v1, ...]``  → validated homogeneous, returns arg type
+    2. Annotation is `Literal[v1, ...]`  → validated homogeneous, returns arg type
     3. Anything else                       → raises ``TypeError`
 
     """

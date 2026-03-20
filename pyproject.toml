@@ -15,7 +15,11 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Intended Audience :: Developers",
 ]
-dependencies = ["pydantic~=2.0", "requests"]
+dependencies = [
+    "msgpack>=1.1.2",
+    "pydantic~=2.0",
+    "requests",
+]
 
 [tool.uv]
 [project.optional-dependencies]

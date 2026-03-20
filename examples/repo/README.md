@@ -3,6 +3,8 @@
 - [example 1](./ex1.py): SqliteRepo basic usage.
 - [example 2](./ex2.py): FsJsonRepo basic usage.
 - [example 3](./ex3.py): S3Repo basic usage.
+- [example 4](./ex4.py): FsRepo basic usage.
+- [example 5](./ex5.py): Focused tutorial on complex data types serialization/validation (to be implemented)
 
 ---
 

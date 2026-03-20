@@ -8,8 +8,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
 from tadween_core.types.artifact.part import BaseArtifactPart
 
 from .base import ART, BaseArtifactRepo, PartNameT
@@ -22,15 +20,14 @@ class LockMode(Enum):
     EXCLUSIVE = "exclusive"
 
 
-class FsJsonRepo(BaseArtifactRepo[ART, PartNameT]):
+class FsRepo(BaseArtifactRepo[ART, PartNameT]):
     """
-    Generic filesystem JSON repository.
+    Generic filesystem repository.
 
     Stores each artifact in its own directory under base_path:
-
         <base_path>/<artifact_id>/
             root.json          # identity, status, scalar fields
-            <part_name>.json   # one file per lazy part
+            <part_name>        # one file per lazy part — BLOB
             .lock              # advisory fcntl lock file
 
     """
@@ -73,7 +70,7 @@ class FsJsonRepo(BaseArtifactRepo[ART, PartNameT]):
 
     def load(self, artifact_id, include=None, **options):
         raw = self.load_raw(artifact_id, include, **options)
-        return self._deserialize(raw) if raw is not None else None
+        return self._deserialize_model(raw) if raw is not None else None
 
     def load_raw(self, artifact_id, include=None, **options) -> dict[str, Any] | None:
         if not self.exists(artifact_id):
@@ -85,7 +82,7 @@ class FsJsonRepo(BaseArtifactRepo[ART, PartNameT]):
     def load_many(self, artifact_ids, include=None, **options):
         raw_map = self.load_many_raw(artifact_ids, include, **options)
         return {
-            aid: (self._deserialize(row) if row is not None else None)
+            aid: (self._deserialize_model(row) if row is not None else None)
             for aid, row in raw_map.items()
         }
 
@@ -100,14 +97,12 @@ class FsJsonRepo(BaseArtifactRepo[ART, PartNameT]):
             for aid, inc in zip(artifact_ids, per_artifact_parts, strict=True)
         }
 
-    def load_part(self, artifact_id: str, part_name: PartNameT):
+    def load_part(
+        self, artifact_id: str, part_name: PartNameT
+    ) -> BaseArtifactPart | None:
         with self._lock_artifact(artifact_id, LockMode.SHARED):
             data = self._read_part(artifact_id, part_name)
-        return (
-            self._part_map[part_name].model_validate_json(data)
-            if data is not None
-            else None
-        )
+        return self._part_map[part_name].deserialize(data) if data is not None else None
 
     def delete_parts(self, artifact_id, parts) -> None:
         if not self.exists(artifact_id):
@@ -135,11 +130,11 @@ class FsJsonRepo(BaseArtifactRepo[ART, PartNameT]):
     def exists(self, artifact_id: str) -> bool:
         return (self._get_dir(artifact_id) / "root.json").exists()
 
-    def _deserialize(self, data: dict[str, Any]) -> ART:
+    def _deserialize_model(self, data: dict[str, Any]) -> ART:
         model = json.loads(data.pop("root"))
         for k, v in data.items():
             if v is not None:
-                model[k] = json.loads(v)
+                model[k] = self._part_map[k].deserialize(v)
         return self._artifact_type.model_validate(model)
 
     def _read_artifact(self, artifact_id, part_names: Sequence[str]) -> dict[str, Any]:
@@ -149,7 +144,7 @@ class FsJsonRepo(BaseArtifactRepo[ART, PartNameT]):
         }
 
     def _read_root(self, artifact_id) -> str:
-        return self._get_part_path(artifact_id, "root").read_text(encoding="utf-8")
+        return self._get_root_path(artifact_id).read_text(encoding="utf-8")
 
     def _read_part(self, artifact_id: str, part_name: PartNameT) -> str | None:
         if part_name not in self._part_map:
@@ -162,19 +157,22 @@ class FsJsonRepo(BaseArtifactRepo[ART, PartNameT]):
                 f"{self._artifact_type.__name__} with id={artifact_id!r} does not exist."
             )
         target = self._get_part_path(artifact_id, part_name)
-        return target.read_text(encoding="utf-8") if target.exists() else None
+        return target.read_bytes() if target.exists() else None
 
     def _get_dir(self, artifact_id: str) -> Path:
         return self.base_path / artifact_id
 
+    def _get_root_path(self, artifact_id: str) -> Path:
+        return self._get_dir(artifact_id) / "root.json"
+
     def _get_part_path(self, artifact_id: str, name: str) -> Path:
-        return self._get_dir(artifact_id) / f"{name}.json"
+        return self._get_dir(artifact_id) / f"{name}.bin"
 
     def _write_root(self, artifact_dir: Path, artifact: ART) -> None:
         """Serialize root fields, excluding lazy parts."""
         self._write_atomic(
             artifact_dir / "root.json",
-            artifact.model_dump_json(exclude=self._part_map.keys()),
+            artifact.model_dump_json(exclude=self._part_map.keys()).encode("utf-8"),
         )
 
     def _write_part(
@@ -201,24 +199,19 @@ class FsJsonRepo(BaseArtifactRepo[ART, PartNameT]):
                 f"Invalid data type for part: {self._artifact_type.__name__}.{part_name} "
                 f"Expected [{expected_type.__name__}], got [{type(data).__name__}]."
             )
-        self._write_atomic(self._get_part_path(artifact_id, part_name), data)
+        self._write_atomic(
+            self._get_part_path(artifact_id, part_name), data.serialize()
+        )
 
-    def _write_atomic(
-        self, target_path: Path, data: str | dict[str, Any] | BaseModel
-    ) -> None:
+    def _write_atomic(self, target_path: Path, data: bytes | str) -> None:
         """Write via a sibling .tmp file then rename (atomic on POSIX)."""
-        if isinstance(data, str):
-            content = data
-        elif isinstance(data, dict):
-            content = json.dumps(data, default=str)
-        elif isinstance(data, BaseModel):
-            content = data.model_dump_json()
-        else:
-            raise TypeError(f"Cannot write data of type {type(data)}")
-
         tmp_path = target_path.with_suffix(".tmp")
         try:
-            tmp_path.write_text(content, encoding="utf-8")
+            if isinstance(data, bytes):
+                tmp_path.write_bytes(data)
+            elif isinstance(data, str):
+                tmp_path.write_bytes(data)
+
             tmp_path.replace(target_path)
         except Exception:
             tmp_path.unlink(missing_ok=True)

@@ -11,6 +11,8 @@ from ..shared_types import (
     ArtifactTest,
     ArtifactTestMetadata,
     ArtifactTestPart,
+    AudioPart,
+    generate_random_array,
     part_names,
 )
 
@@ -131,3 +133,30 @@ class RepoContract:
 
         final = repo.load(id)
         assert final.metadata.checksum.startswith("worker-")
+
+    def test_complex_types(self, repo: BaseRepo, full_artifact: ArtifactTest):
+        repo.save(full_artifact)
+        # audio is a complex type containing numpy.ndarray data.
+        # While the default part serialization type is `bytes`, FsJsonRepo requires human readable format,
+        # so our model needs to know how to express itself (implement mode='json')
+        repo.load_raw(full_artifact.id, include=["audio"])
+        art = repo.load(full_artifact.id, include="all")
+        assert isinstance(art, ArtifactTest)
+        assert isinstance(art.audio, AudioPart)
+
+        array_len = len(art.audio.voice)
+        new_audio = AudioPart(voice=generate_random_array(array_len + 2))
+        repo.save_part(art.id, "audio", new_audio)
+
+        updated_art = repo.load(full_artifact.id, include="all")
+        assert isinstance(updated_art.audio, AudioPart)
+        new_array_len = len(updated_art.audio.voice)
+
+        assert new_array_len > array_len
+
+        # None is skipped. Never overwriting artifact part
+        updated_art.audio = None
+        updated_art = repo.save(updated_art, "all")
+
+        audio_part = repo.load_part(full_artifact.id, "audio")
+        assert isinstance(audio_part, AudioPart)
