@@ -12,9 +12,10 @@ These mirror a realistic media-processing domain:
 from pathlib import Path
 from typing import Literal
 
+from pydantic import BaseModel
+
 from tadween_core.repo import BaseArtifactRepo
-from tadween_core.types.artifact import BaseArtifact
-from tadween_core.types.artifact.base import ArtifactPart, BaseModel, RootModel
+from tadween_core.types.artifact import ArtifactPart, BaseArtifact, RootModel
 
 
 class AudioRoot(RootModel):

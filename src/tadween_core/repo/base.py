@@ -4,7 +4,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any, Generic, Literal, TypeVar
 
 from tadween_core.types.artifact import BaseArtifact
-from tadween_core.types.artifact.base import ArtifactPart
+from tadween_core.types.artifact.part import BaseArtifactPart
 
 PartNameT = TypeVar("PartNameT", bound=str)
 ART = TypeVar("ART", bound=BaseArtifact)
@@ -17,7 +17,8 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
     Responsibilities:
     - Root fields (RootModel + eager BaseModel fields) are always persisted
     together as one atomic unit — they are never partially saved.
-    - ArtifactPart fields are persisted individually and loaded on demand.
+    - BaseArtifactPart fields are persisted individually and loaded on demand. Expected to be `bytes` and saved as BLOBs.
+    If your repo is domain-related, consider adding custom logic for files extensions, part fields serialization, ...etc (tight coupling)
 
     Type Parameters:
         ART: The artifact type
@@ -159,7 +160,7 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
 
     @abstractmethod
     def save_part(
-        self, artifact_id: str, part_name: PartNameT, data: ArtifactPart
+        self, artifact_id: str, part_name: PartNameT, data: BaseArtifactPart
     ) -> None:
         """
         Atomically overwrite a single part.
@@ -170,7 +171,9 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
         """
 
     @abstractmethod
-    def load_part(self, artifact_id: str, part_name: PartNameT) -> ArtifactPart | None:
+    def load_part(
+        self, artifact_id: str, part_name: PartNameT
+    ) -> BaseArtifactPart | None:
         """
         Load a single part; returns ``None`` if it has never been saved.
 

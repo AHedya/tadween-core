@@ -8,6 +8,7 @@ import pytest
 from moto import mock_aws
 
 from tadween_core.repo import SqliteRepo
+from tadween_core.repo.fs import FsRepo
 from tadween_core.repo.json import FsJsonRepo
 from tadween_core.repo.s3 import S3Repo
 
@@ -16,6 +17,7 @@ from .shared_types import (
     ArtifactTest,
     ArtifactTestMetadata,
     ArtifactTestPart,
+    AudioPart,
     part_names,
 )
 
@@ -47,6 +49,14 @@ def json_repo():
     store = FsJsonRepo[ArtifactTest, part_names](
         Path(temp_dir), artifact_type=ArtifactTest
     )
+    yield store
+    shutil.rmtree(temp_dir)
+
+
+@pytest.fixture
+def fs_repo():
+    temp_dir = tempfile.mkdtemp()
+    store = FsRepo[ArtifactTest, part_names](Path(temp_dir), artifact_type=ArtifactTest)
     yield store
     shutil.rmtree(temp_dir)
 
@@ -101,4 +111,5 @@ def full_artifact() -> ArtifactTest:
         ),
         part_a=ArtifactTestPart(),
         part_b=ArtifactTestPart(),
+        audio=AudioPart(),
     )

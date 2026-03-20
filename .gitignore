@@ -21,3 +21,5 @@ examples/repo/temp
 /.pytest_cache
 /.nox
 /.ruff_cache
+
+commit_message.md

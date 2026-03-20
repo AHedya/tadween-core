@@ -5,10 +5,8 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel, Field
 
+from tadween_core.types.artifact import ArtifactPart, BaseArtifact, RootModel
 from tadween_core.types.artifact.base import (
-    ArtifactPart,
-    BaseArtifact,
-    RootModel,
     _inner_type,
     _non_none_args,
 )
