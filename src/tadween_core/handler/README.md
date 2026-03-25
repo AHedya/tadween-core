@@ -1,6 +1,6 @@
 # Handler
 
-The `handler` subpackage provides the fundamental unit of execution in Tadween workflows.
+The `handler` subpackage provides the fundamental unit of execution in `tadween-core` workflows.
 
 ## Concepts
 
@@ -14,8 +14,8 @@ The `handler` subpackage provides the fundamental unit of execution in Tadween w
 ```
 └── handler
     ├── __init__.py => package interface
+    ├── defaults    => prebuilt, ready-to-use handlers implementation
     ├── base.py     => contracts: `BaseHandler` and factory
-    ├── defaults.py => prebuilt, ready-to-use handlers implementation
     ├── dummy.py    => dummy (but useful) handlers implementation
     └── README.md
 ```
