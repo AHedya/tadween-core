@@ -74,13 +74,10 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         Returns:
             task_id (str | None): returns task_id _if_ any tasks are enqueued. Returns None if task is skipped or cancelled
         """
-        # TODO: Error handling is repeated
 
         # step 1: intercept
         try:
-            intercepted = self.policy.intercept(
-                message, repo=self.repo, cache=self.cache
-            )
+            context = self.policy.intercept(message, self.broker, self.repo, self.cache)
         except Exception as e:
             err = PolicyError(
                 message=str(e),
@@ -91,7 +88,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             self.logger.error(f"Policy failed to intercept: {err}")
             self.policy.on_error(message, err, self.broker)
             raise err from e
-        if intercepted:
+        if context and context.intercepted:
             return
 
         # Step 2: resolve inputs

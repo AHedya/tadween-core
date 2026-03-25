@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Annotated, Any, Generic, TypeAlias
 
 from pydantic import BaseModel
@@ -16,6 +17,15 @@ PartNameT = TypeVar("PartNameT", default=str, bound=str)
 BucketSchemaT = TypeVar("BucketSchemaT", default=Any)
 InputT = TypeVar("InputT", default=Any, bound=BaseModel)
 OutputT = TypeVar("OutputT", default=Any, bound=BaseModel)
+
+T = TypeVar("T", default=Any, bound=BaseModel)
+
+
+@dataclass
+class InterceptionContext(Generic[OutputT]):
+    intercepted: bool
+    payload: OutputT | None = None
+    reason: str | None = None
 
 
 class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
@@ -71,16 +81,19 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNa
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
-    ) -> bool:
+    ) -> InterceptionContext[OutputT]:
         """
         Control hook:  called first on every message. Determines whether the
         stage workflow runs.
 
         Returns:
-        - False: not intercepted. Stage proceeds to resolve_inputs and execution.
-        - True:  intercepted. Stage halts. Policy is fully responsible for
-            what happens next. It may call on_success, on_error, mutate
-            metadata, publish to broker, or do nothing at all.
+        InterceptionContext:
+        - payload: optional payload to continue workflow with (execution skipped).
+        - Intercepted: a bool
+            - False: not intercepted. Stage proceeds to resolve_inputs and execution.
+            - True:  intercepted. Stage halts. Policy is fully responsible for
+                what happens next. It may call on_success, on_error, mutate
+                metadata, publish to broker, or do nothing at all.
         May mutate message.metadata to annotate the interception reason.
         """
         pass
@@ -176,8 +189,8 @@ class DefaultStagePolicy(
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
-    ) -> bool:
-        return False
+    ) -> InterceptionContext[OutputT]:
+        return InterceptionContext(intercepted=False, payload=None)
 
     def on_running(self, task_id: str, message: Message):
         pass
@@ -222,7 +235,7 @@ InterceptFn: TypeAlias = Callable[
         BaseArtifactRepo[ArtifactT, PartNameT] | None,
         Cache[BucketSchemaT] | None,
     ],
-    bool,
+    InterceptionContext[OutputT],
 ]
 
 OnRunningFn: TypeAlias = Callable[[Annotated[str, "task_id"], Message], None]
@@ -285,7 +298,7 @@ class StagePolicyBuilder(
         self,
         fn: Callable[
             [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None],
-            bool,
+            InterceptionContext[OutputT],
         ],
     ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":
         """Override intercept hook."""
@@ -353,7 +366,7 @@ class StagePolicyBuilder(
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         cache: Cache[BucketSchemaT] | None = None,
-    ) -> bool:
+    ) -> InterceptionContext[OutputT]:
         if self._intercept_fn:
             return self._intercept_fn(message, broker, repo, cache)
         return super().intercept(message, broker, repo, cache)

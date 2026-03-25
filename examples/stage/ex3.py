@@ -11,6 +11,7 @@ from tadween_core.stage import (  # noqa
     Stage,
     StagePolicy,
 )
+from tadween_core.stage.policy import InterceptionContext
 from tadween_core.task_queue import init_queue
 
 
@@ -36,9 +37,9 @@ class SumSquarePolicy(
         cached = cache.get_bucket(multiplier)
         if cached:
             self.on_success("SKIPPED", message, cached.value, broker, repo, cache)
-            return True
+            return InterceptionContext(intercepted=True, reason="cached")
         else:
-            return False
+            return InterceptionContext(intercepted=False)
 
     def on_success(self, task_id, message, result, broker=None, repo=None, cache=None):
         multiplier = str(message.metadata.get("i", 0))
