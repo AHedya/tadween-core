@@ -1,13 +1,13 @@
 try:
     import boto3
     from boto3.s3.transfer import TransferConfig
-    from botocore.config import Config
     from botocore.exceptions import (
         ClientError,
         EndpointResolutionError,
         NoCredentialsError,
     )
 
+    from ..types.s3_config import S3ClientConfig
 except ImportError:
     raise ImportError("Can't' import boto3. install s3 extension `tadween-core[s3]`")
 import contextlib
@@ -18,38 +18,13 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from tadween_core.exceptions import S3InitError
-
+from ..exceptions import S3InitError
 from .base import ART, BaseArtifactRepo, PartNameT
 
 MB = 1024 * 1024
 
 _CT_JSON = "application/json"
 _CT_BLOB = "application/octet-stream "
-
-
-class S3ClientConfig(BaseModel):
-    access_key: str = Field(serialization_alias="aws_access_key_id")
-    secret_key: str = Field(serialization_alias="aws_secret_access_key")
-    session_token: str | None = Field(
-        default=None, serialization_alias="aws_session_token"
-    )
-
-    endpoint_url: str | None = None
-    region: str = Field(default="us-east-1", serialization_alias="region_name")
-
-    config: Config = Config(
-        signature_version="s3v4",
-        retries={"max_attempts": 3, "mode": "adaptive"},
-        max_pool_connections=20,
-    )
-
-    def boto_kwargs(self) -> dict:
-        return self.model_dump(by_alias=True, exclude_none=True)
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class S3Repo(BaseArtifactRepo[ART, PartNameT]):
@@ -90,7 +65,13 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
         self._compress_threshold = compress_threshold_bytes
         self._multipart_threshold = multipart_threshold_bytes
 
-        preflight_check(self._client, self._bucket_id, True, self.logger, self._prefix)
+        preflight_check(
+            self._client,
+            self._bucket_id,
+            self._prefix,
+            read_only=False,
+            logger=self.logger,
+        )
 
         self._pool = ThreadPoolExecutor(
             max_workers=self._client.meta.config.max_pool_connections,
@@ -333,43 +314,31 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
 
 
 def preflight_check(
-    s3_client,
+    client,
     bucket: str,
-    write_check: bool,
-    logger: logging.Logger,
-    prefix: str | None = None,
-):
+    prefix: str,
+    *,
+    read_only: bool = False,
+    logger: logging.Logger = logging.getLogger("S3-Preflight"),
+) -> None:
     """
-    Runs a staged preflight check against any S3-compatible endpoint.
-
-    Stages:
-        1. Connectivity + Auth — get_bucket_location() maps directly to
-                                s3:GetBucketLocation, replacing list_buckets()
-                                which is not granted by this scoped policy.
-        2. Bucket read         — head_bucket() exercises s3:ListBucket.
-        3. Write + round-trip  — put → get → delete exercises all three
-                                object-level permissions in one pass.
+    Always checks connectivity and auth. Additional permission checks
+    are opt-in via flags.
     """
-    fail = partial(_fail, logger=logger)
-
-    # Prefix is mandatory: object-level permissions are scoped to prefix/* only.
-    if prefix is None:
-        fail(
-            "A prefix is required. Object-level permissions (GetObject, PutObject, "
-            "DeleteObject) are only granted under a prefix path per the bucket policy."
+    if not prefix:
+        raise S3InitError(
+            "A prefix is required — object-level permissions are scoped to prefix/* only."
         )
 
     normalized_prefix = prefix.strip("/") + "/"
+    probe_key = f"{normalized_prefix}.preflight-probe"
+    fail = partial(_fail, logger=logger)
 
-    logger.info("Running S3-compatible preflight checks")
-
-    # connectivity + Auth
-    logger.info("Checking connectivity and credentials via get_bucket_location...")
+    # Stage 1: connectivity + auth
     try:
-        s3_client.get_bucket_location(Bucket=bucket)
-        logger.info("Credentials accepted")
+        client.get_bucket_location(Bucket=bucket)
     except NoCredentialsError:
-        fail("No credentials configured. Check your access key / secret key.")
+        fail("No credentials configured.")
     except ClientError as e:
         code = e.response["Error"]["Code"]
         if code in ("InvalidAccessKeyId", "SignatureDoesNotMatch", "403"):
@@ -377,56 +346,58 @@ def preflight_check(
         elif code in ("404", "NoSuchBucket"):
             fail(f"Bucket '{bucket}' does not exist.")
         else:
-            fail(f"Unexpected auth error — {code}: {e}")
+            fail(f"Unexpected auth error — {code}")
     except EndpointResolutionError as e:
         fail(f"Cannot reach endpoint — {e}")
-    except Exception as e:
-        fail(f"Connection failed — {e}")
 
-    # bucket read (s3:ListBucket)
-    logger.info(f"Checking bucket '{bucket}' is accessible...")
+    # Stage 2: bucket visibility
     try:
-        s3_client.head_bucket(Bucket=bucket)
-        logger.info(f"Bucket '{bucket}' accessible")
+        client.head_bucket(Bucket=bucket)
     except ClientError as e:
         code = e.response["Error"]["Code"]
         if code in ("404", "NoSuchBucket"):
             fail(f"Bucket '{bucket}' does not exist.")
         elif code in ("403", "AccessDenied"):
-            fail(f"Bucket '{bucket}' exists but access is denied.")
+            fail(f"Access denied to bucket '{bucket}'.")
         else:
-            fail(f"Bucket check failed — {code}: {e}")
+            fail(f"Bucket read failed — {code}")
 
-    #  Object round-trip (s3:PutObject + s3:GetObject + s3:DeleteObject)
-    if write_check:
-        probe_key = f"{normalized_prefix}.preflight-probe"
-        logger.info(
-            f"Checking object permissions via round-trip probe '{probe_key}'..."
+    # Stage 3: object-level checks
+    if read_only:
+        # Attempt get on an arbitrary existing key to confirm read permission.
+        response = client.list_objects_v2(
+            Bucket=bucket, Prefix=normalized_prefix, MaxKeys=1
         )
+        keys = [obj["Key"] for obj in response.get("Contents", [])]
+        if keys:
+            try:
+                client.get_object(Bucket=bucket, Key=keys[0])
+            except ClientError as e:
+                fail(f"GetObject failed — {e.response['Error']['Code']}")
+    else:
+        probe_key = f"{normalized_prefix}.preflight-probe"
+        # write
         try:
-            s3_client.put_object(Bucket=bucket, Key=probe_key, Body=b"preflight")
-            logger.info("s3:PutObject confirmed")
+            client.put_object(Bucket=bucket, Key=probe_key, Body=b"preflight")
         except ClientError as e:
             fail(f"PutObject failed — {e.response['Error']['Code']}")
-
+        # read
         try:
-            s3_client.get_object(Bucket=bucket, Key=probe_key)
-            logger.info("s3:GetObject confirmed")
+            client.get_object(Bucket=bucket, Key=probe_key)
         except ClientError as e:
-            # Best-effort cleanup before failing
+            # best effort delete what we've written before failing
             with contextlib.suppress(ClientError):
-                s3_client.delete_object(Bucket=bucket, Key=probe_key)
+                client.delete_object(Bucket=bucket, Key=probe_key)
             fail(f"GetObject failed — {e.response['Error']['Code']}")
-
+        # delete
         try:
-            s3_client.delete_object(Bucket=bucket, Key=probe_key)
-            logger.info("s3:DeleteObject confirmed")
+            client.delete_object(Bucket=bucket, Key=probe_key)
         except ClientError as e:
             fail(f"DeleteObject failed — {e.response['Error']['Code']}")
 
-    logger.info("All preflight checks passed. Starting workflow.")
+    logger.info("S3 preflight passed.")
 
 
 def _fail(reason: str, logger: logging.Logger):
     logger.error(f"Preflight failed: {reason}")
-    raise S3InitError(message="Failed running preflight check.", reason=reason)
+    raise S3InitError(message="Preflight check failed.", reason=reason)
