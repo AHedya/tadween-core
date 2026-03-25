@@ -1,5 +1,4 @@
 import time
-import uuid
 from pathlib import Path
 
 try:
@@ -65,7 +64,7 @@ class S3DownloadHandler(BaseHandler[S3DownloadInput, S3DownloadOutput]):
 
     def run(self, inputs: S3DownloadInput) -> S3DownloadOutput:
         local_path = Path(
-            inputs.local_path or self.local_dir / f"{uuid.uuid4()}{inputs.suffix}"
+            inputs.local_path or self.local_dir / f"{inputs.key}{inputs.suffix}"
         )
 
         start_time = time.perf_counter()

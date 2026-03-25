@@ -11,6 +11,7 @@ from tadween_core.stage.policy import (
     PartNameT,
     StagePolicy,
 )
+from tadween_core.task_queue.base import TaskEnvelope, TaskMetadata
 
 
 class WorkflowRoutingPolicy(
@@ -41,6 +42,65 @@ class WorkflowRoutingPolicy(
 
     def resolve_inputs(self, message, repo=None, cache=None):
         return self._stage_policy.resolve_inputs(message, repo, cache)
+
+    def intercept(self, message, broker=None, repo=None, cache=None):
+        active_broker = self._broker or broker
+
+        context = self._stage_policy.intercept(message, broker, repo, cache)
+        if not context or not context.intercepted:
+            return context
+
+        self._stage_policy.on_done(
+            message,
+            TaskEnvelope(
+                payload=None,
+                metadata=TaskMetadata(
+                    task_id="N/A", start_time=0, end_time=0, submit_time=0
+                ),
+                error=None,
+                success=True,
+            ),
+        )
+        self._stage_policy.on_success(
+            "N/A", message, context.payload, active_broker, repo, cache
+        )
+
+        if active_broker and self._output_topics:
+            try:
+                payload = self._payload_extractor(context.payload)
+            except Exception as e:
+                raise PolicyError(
+                    message=f"Interception payload extractor failed: {e}",
+                    stage_name=self._stage_name,
+                    policy_name=self.__class__.__name__,
+                    method="payload_extractor",
+                    task_id="N/A",
+                ) from e
+
+            message.metadata.update(
+                {
+                    "parent_message_id": message.id,
+                    "interception": {
+                        "intercepted": context.intercepted,
+                        "reason": context.reason,
+                    },
+                }
+            )
+
+            for topic in self._output_topics:
+                try:
+                    out_msg = message.fork(topic=topic, payload=payload)
+                    active_broker.publish(out_msg)
+                except Exception as e:
+                    raise RoutingError(
+                        message=f"Failed to publish to topic {topic}: {e}",
+                        stage_name=self._stage_name,
+                        topic=topic,
+                        task_id="N/A",
+                    ) from e
+        if active_broker:
+            active_broker.ack(message.id)
+        return context
 
     def on_success(
         self,
@@ -108,9 +168,6 @@ class WorkflowRoutingPolicy(
 
     def on_done(self, message, envelope):
         self._stage_policy.on_done(message, envelope)
-
-    def intercept(self, message, broker=None, repo=None, cache=None):
-        self._stage_policy.intercept(message, broker, repo, cache)
 
     def on_running(self, task_id, message):
         self._stage_policy.on_running(task_id, message)

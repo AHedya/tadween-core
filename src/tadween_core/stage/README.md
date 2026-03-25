@@ -22,7 +22,7 @@ without coupling that logic to the handler or the executor.
 
 | Hook | Returns | Called when |
 |---|---|---|
-| `intercept(message, repo, cache)` | `bool` | Message arrives. `True` = policy handled it, stop workflow. `False` = proceed normally. |
+| `intercept(message, repo, cache)` | `InterceptionContext` | Message arrives. `intercepted=True` = policy handled it, stop workflow. `intercepted=False` = proceed normally. |
 | `resolve_inputs(message, repo, cache)` | `InputT \| dict` | Normal workflow only. Determines where handler input comes from: payload, cache, or repo. |
 
 When `intercept` returns `True`, the policy is fully responsible for what
@@ -52,8 +52,15 @@ on_received
     on_success | on_error
 ```
 
-Important note: `intercept` runs synchronously on the main thread at submission time. while `on_success` runs asynchronously after the worker completes. When you submit all tasks in rapid succession, every `intercept` call hits an empty cache because no task has had time to finish and write to it.<br>
+#### Interception gotchas
+
+- Onces `InterceptionContext.intercepted` is `True`, you need to differentiate between:
+  1. Workflow stage policy: This policy is wrapped by the workflow router. Workflow router publishes messages for fan-out topics, auto-acks our message _on success_ and _on interception_ and auto-negative-ack on failure. So `intercept` is straightforward, you don't need to maintain any interception implications logic.
+  2. Standalone or manually connected stages: You define the whole logic once intercepted.
+- `intercept` runs synchronously on the main thread at submission time. while `on_success` runs asynchronously after the worker completes. When you submit all tasks in rapid succession, every `intercept` call hits an empty cache because no task has had time to finish and write to it.<br>
 If you use single stage and try to hit the cache, you would typically need to distribute submissions on intervals.
+
+Note: Default workflow router implementation fires `on_done` automatically. ***Never ack, nack, invoke `on_done` in workflow managed stage policies*** unless you know what you do.
 
 ## Anatomy
 ```
