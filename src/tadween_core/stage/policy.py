@@ -89,7 +89,7 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNa
         Returns:
         InterceptionContext:
         - payload: optional payload to continue workflow with (execution skipped).
-        - Intercepted: a bool
+        - intercepted: a bool
             - False: not intercepted. Stage proceeds to resolve_inputs and execution.
             - True:  intercepted. Stage halts. Policy is fully responsible for
                 what happens next. It may call on_success, on_error, mutate
@@ -232,6 +232,7 @@ ResolveInputsFn: TypeAlias = Callable[
 InterceptFn: TypeAlias = Callable[
     [
         Message,
+        BaseMessageBroker | None,
         BaseArtifactRepo[ArtifactT, PartNameT] | None,
         Cache[BucketSchemaT] | None,
     ],
@@ -297,7 +298,12 @@ class StagePolicyBuilder(
     def with_intercept(
         self,
         fn: Callable[
-            [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None],
+            [
+                Message,
+                BaseMessageBroker | None,
+                BaseArtifactRepo | None,
+                Cache[BucketSchemaT] | None,
+            ],
             InterceptionContext[OutputT],
         ],
     ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":

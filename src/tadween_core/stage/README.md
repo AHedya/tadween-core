@@ -54,7 +54,7 @@ on_received
 
 #### Interception gotchas
 
-- Onces `InterceptionContext.intercepted` is `True`, you need to differentiate between:
+- Once `InterceptionContext.intercepted` is `True`, you need to differentiate between:
   1. Workflow stage policy: This policy is wrapped by the workflow router. Workflow router publishes messages for fan-out topics, auto-acks our message _on success_ and _on interception_ and auto-negative-ack on failure. So `intercept` is straightforward, you don't need to maintain any interception implications logic.
   2. Standalone or manually connected stages: You define the whole logic once intercepted.
 - `intercept` runs synchronously on the main thread at submission time. while `on_success` runs asynchronously after the worker completes. When you submit all tasks in rapid succession, every `intercept` call hits an empty cache because no task has had time to finish and write to it.<br>
