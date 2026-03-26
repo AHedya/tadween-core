@@ -18,32 +18,54 @@ P = ParamSpec("P")
 
 
 def write_cache(
-    cache_field: str,
-    result_field: str,
+    cache_field: str | list[str],
+    result_field: str | list[str] | None,
     cache_key: str = "cache_key",
     mode: str = "before",
 ) -> Callable[[Callable[P, None]], Callable[P, None]]:
     """
-    Decorator for on_success that writes result fields to cache.
+        Decorator for `on_success` stage policy event that writes result fields to cache.
 
-    Maps data from the handler's result object to a cache bucket identified by
-    message.metadata[cache_key].
+        Maps data from the handler's result object to a cache bucket identified by
+        message.metadata[cache_key]. Supports mapping single or multiple fields.
 
-    Args:
-        cache_field: The attribute name to write to on the cache bucket.
-        result_field: The attribute name to read from on the result object.
-        cache_key: Metadata key for cache lookup. Defaults to "cache_key".
-        mode: "before" to write before calling original method, "after" to write after.
-            Defaults to "before".
+        Args:
+            cache_field: The attribute name to write to on the cache bucket.
+            result_field: The attribute name to read from on the result object. If set to `None`, whole result
+                object is saved in cache field.
+            cache_key: Metadata key for cache lookup. Defaults to "cache_key".
+            mode: "before" to write before calling original method, "after" to write after.
+                Defaults to "before".
 
-    Example:
-        ```python
-        # result.audio_array will be stored in bucket.cached_audio
-        @write_cache(cache_field="cached_audio", result_field="audio_array")
-        def on_success(self, task_id, message, result, broker=None, repo=None, cache=None):
-            pass
-        ```
+    Raises:
+            ValueError: If cache_field and result_field are lists of different lengths.
+
+        Example:
+            ```python
+            # Single field mapping:
+            @write_cache(cache_field="cached_audio", result_field="audio_array")
+            def on_success(self, task_id, message, result, ...):
+                pass
+
+            # Multiple field mapping:
+            @write_cache(
+                cache_field=["cached_audio", "cached_meta"],
+                result_field=["audio_array", "metadata"]
+            )
+            def on_success(self, task_id, message, result, ...):
+                pass
+            ```
     """
+    cache_field = [cache_field] if isinstance(cache_field, str) else cache_field
+    if result_field is None:
+        result_field = [None]
+    else:
+        result_field = [result_field] if isinstance(result_field, str) else result_field
+    if len(cache_field) != len(result_field):
+        raise ValueError(
+            f"Length mismatch: cache_field ({len(cache_field)}) and "
+            f"result_field ({len(result_field)}) must have the same length."
+        )
 
     def decorator(method: Callable[P, None]) -> Callable[P, None]:
         @functools.wraps(method)
@@ -62,9 +84,11 @@ def write_cache(
                 if bucket_key is not None and cache is not None:
                     bucket = cache.get_or_create(bucket_key)
 
-                    value = getattr(result, result_field, None)
-                    if value is not None:
-                        setattr(bucket, cache_field, value)
+                    for cf, rf in zip(cache_field, result_field, strict=True):
+                        value = getattr(result, rf, None) if rf is not None else result
+
+                        if value is not None:
+                            setattr(bucket, cf, value)
 
             if mode == "before":
                 do_write()
