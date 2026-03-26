@@ -218,7 +218,7 @@ class DefaultStagePolicy(
         pass
 
 
-## builder and factory function
+# builder and factory function
 ResolveInputsFn: TypeAlias = Callable[
     [
         Message,
@@ -331,10 +331,10 @@ class StagePolicyBuilder(
             [
                 str,  # task_id
                 Message,
-                OutputT,  # result - properly typed with OutputT generic!
+                OutputT,
                 BaseMessageBroker | None,
                 BaseArtifactRepo | None,
-                Cache[BucketSchemaT] | None,  # cache properly typed with BucketSchemaT!
+                Cache[BucketSchemaT] | None,
             ],
             None,
         ],
