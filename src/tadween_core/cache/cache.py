@@ -1,3 +1,4 @@
+import logging
 import sys
 import time
 from typing import Any, Generic, TypeVar
@@ -20,12 +21,14 @@ class Cache(Generic[BucketSchemaT]):
         self,
         schema_type: type[BucketSchemaT],
         policy: CachePolicy | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         """Initialize the cache with a schema type and policy.
 
         Args:
             schema_type (type[BucketSchemaT]): schema type.
             policy (CachePolicy | None, optional): Set evection policy, and size limits. Defaults to None.
+            logger (logging.Logger | None, optional): Optional logger instance. Defaults to tadween.cache.<id>.
         """
         self._adapter = create_schema_adapter(schema_type)
         self._schema_type: type[BucketSchemaT] = schema_type
@@ -33,6 +36,7 @@ class Cache(Generic[BucketSchemaT]):
         self._policy = policy or CachePolicy()
         self._bucket_sizes: dict[str, int] = {}
         self._bucket_last_accessed: dict[str, float] = {}
+        self.logger = logger or logging.getLogger(f"tadween.cache.{id(self):x}")
 
     def get_bucket(self, key: str) -> (
         BucketProxy[BucketSchemaT] | BucketSchemaT
@@ -283,7 +287,6 @@ class Cache(Generic[BucketSchemaT]):
         """Centralized read logic for both Proxy and direct Cache access."""
         self._bucket_last_accessed[key] = time.perf_counter()
 
-        # 1. Check TTL expiration - Strict
         if (
             self._policy.entry_ttl
             and time.perf_counter() - entry.created_at > self._policy.entry_ttl
@@ -291,23 +294,25 @@ class Cache(Generic[BucketSchemaT]):
             old_size = entry.size
             entry.update(None)
             self._bucket_sizes[key] -= old_size - entry.size
+            self.logger.debug(
+                f"Entry '{field_name}' in bucket '{key}' expired (ttl={self._policy.entry_ttl}s)"
+            )
             return None
 
         val = entry.value
 
-        # 2. Check remaining reads
         if entry.remaining_reads is not None:
             if entry.remaining_reads < 0:
-                # Quota was already exhausted in a previous read
                 return None
 
             if entry.remaining_reads == 0:
-                # Quota just reached zero with this read.
-                # Evict now to save memory, but return the value for this final read.
                 if val is not None:
                     old_size = entry.size
                     entry.update(None, remaining_reads=0)
                     self._bucket_sizes[key] -= old_size - entry.size
+                    self.logger.debug(
+                        f"Entry '{field_name}' in bucket '{key}' evicted (read quota exhausted)"
+                    )
                 return val
 
         return val
@@ -386,6 +391,9 @@ class Cache(Generic[BucketSchemaT]):
         while len(self._store) >= self._policy.max_buckets:
             evict_key = self._select_bucket_for_eviction()
             if evict_key:
+                self.logger.debug(
+                    f"Evicting bucket '{evict_key}' (max_buckets={self._policy.max_buckets})"
+                )
                 self.delete_bucket(evict_key)
             else:
                 break
@@ -415,10 +423,13 @@ class Cache(Generic[BucketSchemaT]):
             if field_to_evict:
                 entry = internal[field_to_evict]
                 old_size = entry.size
-                entry.update(None)  # "Evict" by setting value to None
+                entry.update(None)
                 self._bucket_sizes[key] -= old_size - entry.size
+                self.logger.debug(
+                    f"Evicted entry '{field_to_evict}' from bucket '{key}' "
+                    f"(strategy={self._policy.eviction_strategy})"
+                )
             else:
-                # If we can't evict anything else and still no space
                 if self._policy.eviction_strategy == "none":
                     raise RuntimeError(
                         f"Bucket '{key}' exceeded max_bucket_size and no eviction strategy set"

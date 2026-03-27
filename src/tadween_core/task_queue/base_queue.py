@@ -59,7 +59,7 @@ class BaseTaskQueue(ABC, Generic[T]):
         retain_results: bool = True,
     ):
         self.name = name or f"{self.__class__.__name__}-{id(self):x}"
-        self.logger = logger or logging.getLogger(f"tadween.{self.name}")
+        self.logger = logger or logging.getLogger(f"tadween.task_queue.{self.name}")
         self.retain_results = retain_results
         self.default_policy = default_policy or NoOpPolicy
         self._tasks: dict[str, Future[TaskEnvelope[T]]] = {}
@@ -121,7 +121,8 @@ class BaseTaskQueue(ABC, Generic[T]):
         try:
             envelope: TaskEnvelope = future.result()
             return TaskStatus.COMPLETED if envelope.success else TaskStatus.FAILED
-        except Exception:
+        except Exception as e:
+            self.logger.debug(f"Task {task_id} status check failed: {e}")
             return TaskStatus.FAILED
 
     def get_all_statuses(self) -> dict[str, TaskStatus]:

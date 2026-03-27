@@ -1,5 +1,6 @@
 import logging
 import multiprocessing as mp
+import warnings
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing.context import BaseContext
@@ -16,12 +17,21 @@ def _resolve_mp_context(mp_context: BaseContext | str | None) -> BaseContext:
         try:
             return mp.get_context(mp_context)
         except Exception:
+            warnings.warn(
+                f"Failed to get context '{mp_context}', falling back to platform default",
+                category=RuntimeWarning,
+                stacklevel=2,
+            )
             return mp.get_context()
     elif mp_context is None:
-        # default to 'spawn' for safety in multi-threaded environments
         try:
             return mp.get_context("spawn")
         except Exception:
+            warnings.warn(
+                "Failed to get 'spawn' context, falling back to platform default",
+                category=RuntimeWarning,
+                stacklevel=2,
+            )
             return mp.get_context()
     else:
         return mp_context

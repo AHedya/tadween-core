@@ -42,10 +42,10 @@ class Workflow:
             None means infinite life.
         """
         self.broker = broker
-        self.name = name or f"Workflow-{id(self)}"
+        self.name = name or f"Workflow-{id(self):x}"
         self.cache = cache
         self.life_length = life_length
-        self.logger = logger or getLogger(__name__)
+        self.logger = logger or getLogger(f"tadween.workflow.{self.name}")
 
         self._stages: dict[str, Stage] = {}
         # Adjacency list: source_stage -> [target_stages]

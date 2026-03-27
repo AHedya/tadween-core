@@ -13,8 +13,6 @@ from .base import (
     Message,
 )
 
-logger = logging.getLogger(__name__)
-
 THREAD_EXIT_GRACE: float = 0.2
 
 
@@ -24,7 +22,9 @@ class InMemoryBroker(BaseMessageBroker):
     NOT suitable for production (no persistence, loses messages on crash).
     """
 
-    def __init__(self, max_workers: int | None = None):
+    def __init__(
+        self, max_workers: int | None = None, logger: logging.Logger | None = None
+    ):
         self._topics: dict[str, Queue[Message]] = {}
         # Each entry: (callable, auto_ack, handler_timeout)
         self._handlers: dict[str, tuple[tuple[Callable, bool, float | None], ...]] = {}
@@ -33,6 +33,7 @@ class InMemoryBroker(BaseMessageBroker):
         self._lock = threading.Lock()
         self._running = True
         self._dispatch_threads: dict[str, threading.Thread] = {}
+        self.logger = logger or logging.getLogger("tadween.broker.memory")
 
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
@@ -47,7 +48,7 @@ class InMemoryBroker(BaseMessageBroker):
         thread_started = False
         with self._lock:
             if not self._running:
-                logger.warning("Broker already closed")
+                self.logger.warning("Broker already closed")
                 raise RuntimeError("Broker closed")
 
             self._pending_acks[message.id] = self._pending_acks.get(message.id, 0) + 1
@@ -166,14 +167,14 @@ class InMemoryBroker(BaseMessageBroker):
             the exception is raised so the broker is left in a clean state.
         """
         if not self._running:
-            logger.warning("Broker already closed. Quit")
+            self.logger.warning("Broker already closed. Quit")
             return
 
         if force:
             self._force_close()
             return
 
-        logger.info("Broker closing... waiting for pending tasks.")
+        self.logger.info("Broker closing... waiting for pending tasks.")
 
         quiesced = self.join(timeout=timeout)
         if not quiesced:
@@ -191,7 +192,7 @@ class InMemoryBroker(BaseMessageBroker):
 
         # All handlers are already acked (quiescence confirmed above).
         self._executor.shutdown(wait=False, cancel_futures=False)
-        logger.info("Broker closed.")
+        self.logger.info("Broker closed.")
 
     def ack(self, message_id: str) -> None:
         """Decrement the pending-ack reference count for a message.
@@ -202,7 +203,7 @@ class InMemoryBroker(BaseMessageBroker):
         """
         with self._quiescence_cond:
             if message_id not in self._pending_acks:
-                logger.warning(f"Double Ack or Unknown Message ID: {message_id}")
+                self.logger.warning(f"Double Ack or Unknown Message ID: {message_id}")
                 return
             self._pending_acks[message_id] -= 1
             if self._pending_acks[message_id] <= 0:
@@ -244,7 +245,7 @@ class InMemoryBroker(BaseMessageBroker):
 
     def _force_close(self) -> None:
         """Discard all queued / pending-ack work and stop immediately. Never raises."""
-        logger.warning(
+        self.logger.warning(
             "Force-closing broker. Pending / un-acked messages will be dropped."
         )
         with self._quiescence_cond:
@@ -264,7 +265,7 @@ class InMemoryBroker(BaseMessageBroker):
         with self._lock:
             threads = list(self._dispatch_threads.values())
         self._join_threads(threads)
-        logger.info("Broker force-closed.")
+        self.logger.info("Broker force-closed.")
 
     def _join_threads(
         self, threads: list[threading.Thread], timeout: float = THREAD_EXIT_GRACE
@@ -275,7 +276,7 @@ class InMemoryBroker(BaseMessageBroker):
         for t in threads:
             t.join(timeout=timeout)
             if t.is_alive():
-                logger.warning(
+                self.logger.warning(
                     f"Dispatch thread [{t.name}] did not stop within {timeout}s grace period. "
                     "It will self-terminate once its current handler returns.",
                 )
@@ -314,7 +315,7 @@ class InMemoryBroker(BaseMessageBroker):
             exc = future.exception()
 
             if timed_out:
-                logger.warning(
+                self.logger.warning(
                     f"Handler {getattr(handler_func, '__qualname__', repr(handler_func))} exceeded timeout of {handler_timeout:.1f}s (actual: {elapsed:.1f}s) "
                     f"on message(id:{message.id}) (topic={topic}). Acking defensively.",
                 )
@@ -328,7 +329,7 @@ class InMemoryBroker(BaseMessageBroker):
                     ),
                 )
             elif exc is not None:
-                logger.error(f"Broker handler error: {exc}")
+                self.logger.error(f"Broker handler error: {exc}")
                 self._notify_listeners(
                     "on_message_failed", message=message, topic=topic, error=exc
                 )
@@ -420,14 +421,14 @@ class InMemoryBroker(BaseMessageBroker):
                         except RuntimeError:
                             # Executor was shut down (broker closing mid-dispatch).
                             # Ack defensively so this slot doesn't leak.
-                            logger.warning(
+                            self.logger.warning(
                                 "Executor shut down while submitting handler for "
                                 f"message(id={message.id}) — ack-ing defensively.",
                             )
                             self.ack(message.id)
 
                 except Exception as e:
-                    logger.error(
+                    self.logger.error(
                         f"Error processing message [{getattr(message, 'id', 'unknown')}]: {e}",
                     )
                     if message:
@@ -436,7 +437,7 @@ class InMemoryBroker(BaseMessageBroker):
                     q.task_done()
 
             except Exception as e:
-                logger.error(
+                self.logger.error(
                     f"Dispatch loop critical error on topic {topic}: {e}",
                 )
                 continue
@@ -448,4 +449,4 @@ class InMemoryBroker(BaseMessageBroker):
             try:
                 getattr(listener, event)(**kwargs)
             except Exception as e:
-                logger.error(f"Listener error in {event}: {e}")
+                self.logger.error(f"Listener error in {event}: {e}")
