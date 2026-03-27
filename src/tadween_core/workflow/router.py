@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -18,7 +19,7 @@ class WorkflowRoutingPolicy(
     StagePolicy[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]
 ):
     """
-    A Decorator Policy that handles the "Transport/Routing" layer of a workflow.
+    A wrapper policy that handles the "Transport/Routing" layer of a workflow.
 
     It wraps a `stage_policy` (which handles persistence/lifecycle) and adds
     automatic message forwarding to the next stage(s) upon success.
@@ -31,11 +32,13 @@ class WorkflowRoutingPolicy(
         stage_name: str | None = None,
         broker: BaseMessageBroker | None = None,
         payload_extractor: Callable[[OutputT], Any] | None = None,
+        logger: logging.Logger | None = None,
     ):
         self._stage_policy = stage_policy
         self._output_topics = output_topics
         self._stage_name = stage_name or "WorkflowRouter"
         self._broker = broker
+        self.logger = logger or logging.getLogger("tadween.workflow.router")
 
         # Default: no payload passing
         self._payload_extractor = payload_extractor or (lambda x: {})
@@ -69,13 +72,15 @@ class WorkflowRoutingPolicy(
             try:
                 payload = self._payload_extractor(context.payload)
             except Exception as e:
-                raise PolicyError(
+                err = PolicyError(
                     message=f"Interception payload extractor failed: {e}",
                     stage_name=self._stage_name,
                     policy_name=self.__class__.__name__,
                     method="payload_extractor",
                     task_id="N/A",
-                ) from e
+                )
+                self.logger.error(f"{err}")
+                raise err from e
 
             message.metadata.update(
                 {
@@ -92,12 +97,14 @@ class WorkflowRoutingPolicy(
                     out_msg = message.fork(topic=topic, payload=payload)
                     active_broker.publish(out_msg)
                 except Exception as e:
-                    raise RoutingError(
+                    err = RoutingError(
                         message=f"Failed to publish to topic {topic}: {e}",
                         stage_name=self._stage_name,
                         topic=topic,
                         task_id="N/A",
-                    ) from e
+                    )
+                    self.logger.error(f"{err}")
+                    raise err from e
         if active_broker:
             active_broker.ack(message.id)
         return context
@@ -123,13 +130,15 @@ class WorkflowRoutingPolicy(
             try:
                 payload = self._payload_extractor(result)
             except Exception as e:
-                raise PolicyError(
+                err = PolicyError(
                     message=f"Payload extractor failed: {e}",
                     stage_name=self._stage_name,
                     policy_name=self.__class__.__name__,
                     method="payload_extractor",
                     task_id=task_id,
-                ) from e
+                )
+                self.logger.error(f"{err}")
+                raise err from e
 
             # propagate metadata
             message.metadata.update({"parent_message_id": message.id})
@@ -139,12 +148,14 @@ class WorkflowRoutingPolicy(
                     out_msg = message.fork(topic=topic, payload=payload)
                     active_broker.publish(out_msg)
                 except Exception as e:
-                    raise RoutingError(
+                    err = RoutingError(
                         message=f"Failed to publish to topic {topic}: {e}",
                         stage_name=self._stage_name,
                         topic=topic,
                         task_id=task_id,
-                    ) from e
+                    )
+                    self.logger.error(f"{err}")
+                    raise err from e
 
         # We do this here so the wrapper owns the "Unit of Work" completion.
         # If any of the above (inner policy or routing) failed, Stage._on_task_done

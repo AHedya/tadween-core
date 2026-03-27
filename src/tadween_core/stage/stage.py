@@ -45,7 +45,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
     ):
         self.handler = handler
         self.name = name or f"Stage:{self.handler.__class__.__name__}"
-        self.logger = logger or getLogger(self.name)
+        self.logger = logger or getLogger(f"tadween.stage.{self.name}")
 
         self.policy = policy or DefaultStagePolicy()
         self.broker = broker

@@ -1,6 +1,5 @@
 import fcntl
 import json
-import logging
 import shutil
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
@@ -11,8 +10,6 @@ from typing import Any
 from tadween_core.types.artifact.part import BaseArtifactPart
 
 from .base import ART, BaseArtifactRepo, PartNameT
-
-logger = logging.getLogger(__name__)
 
 
 class LockMode(Enum):
@@ -215,7 +212,7 @@ class FsRepo(BaseArtifactRepo[ART, PartNameT]):
             tmp_path.replace(target_path)
         except Exception:
             tmp_path.unlink(missing_ok=True)
-            logger.error(
+            self.logger.error(
                 f"Failed writing {target_path}",
             )
             raise

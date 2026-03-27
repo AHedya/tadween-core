@@ -1,5 +1,7 @@
+import logging
 from importlib.metadata import PackageNotFoundError, version
 
+from ._logging import set_logger
 from .exceptions import (
     HandlerError,
     InputValidationError,
@@ -8,7 +10,10 @@ from .exceptions import (
     StageError,
     TadweenError,
 )
-from .utils import set_logger
+
+logger = logging.getLogger("tadween")
+logger.addHandler(logging.NullHandler())
+
 
 try:
     __version__ = version("tadween-core")

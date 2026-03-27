@@ -72,6 +72,23 @@ uv run pytest
 uv run pytest -v -s
 ```
 
+## Logger
+
+The library logger follows Python best practices and is **silent by default**. To quickly configure logging, use `tadween_core.set_logger`, which sets up a default logger configuration for the parent. Review the implementation [here](./src/tadween_core/_logging.py).<br>
+The root logger for the library uses the namespace `tadween`. And each major component logger use standard hierarchical naming, for example: `tadween.cache`, `tadween.stage`, `tadween.repo`, ...etc.<br>
+You may provide your own logger via dependency injection (DI), which is supported by most major components.
+
+### Custom Logger Integration
+
+If you want to avoid interacting with the library’s logger hierarchy, you can either do:
+
+- Use a logger with a **different name** (e.g., `"my_custom_logger"`)
+- Disable propagation by setting:
+    ```python
+    logger.propagate = False
+    ```
+    Make sure to attach handlers for disabled propagation loggers.
+
 ## The Backstory
 <details>
 <summary>The story of tadween-core</summary>

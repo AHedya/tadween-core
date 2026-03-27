@@ -36,7 +36,9 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
         self._artifact_type = artifact_type
         self._part_map = self._artifact_type.get_part_map()
         self._eager_map = self._artifact_type.get_eager_map()
-        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self.logger = logger or logging.getLogger(
+            f"tadween.repo.{self.__class__.__name__}"
+        )
 
     def _resolve_part_names(
         self, include: Iterable[PartNameT] | Literal["all"] | None
