@@ -1,4 +1,4 @@
 from .base import BaseArtifact, RootModel
-from .part import ArtifactPart
+from .part import ArtifactPart, PicklePart
 
-__all__ = ["ArtifactPart", "BaseArtifact", "RootModel"]
+__all__ = ["ArtifactPart", "BaseArtifact", "PicklePart", "RootModel"]

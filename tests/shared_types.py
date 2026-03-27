@@ -12,7 +12,12 @@ from pydantic import (
     field_validator,
 )
 
-from tadween_core.types.artifact import ArtifactPart, BaseArtifact, RootModel
+from tadween_core.types.artifact import (
+    ArtifactPart,
+    BaseArtifact,
+    PicklePart,
+    RootModel,
+)
 from tadween_core.types.artifact.part import ser_ndarray, val_ndarray
 
 
@@ -20,9 +25,36 @@ def generate_random_array(size) -> np.ndarray:
     return np.array([random.gauss(0, 1) for _ in range(size)])
 
 
+class CustomObject:
+    """Custom Python class for testing PicklePart with arbitrary objects."""
+
+    def __init__(self, value: int, name: str):
+        self.value = value
+        self.name = name
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, CustomObject)
+            and self.value == other.value
+            and self.name == other.name
+        )
+
+
 class ArtifactTestPart(ArtifactPart):
     content: str = "test-content"
     result: dict = {"res1": "this is a very huge result"}
+
+
+class PickleNumpyPart(PicklePart):
+    """PicklePart with numpy array - no custom validators needed."""
+
+    data: np.ndarray = Field(default_factory=lambda: generate_random_array(50))
+
+
+class PickleCustomPart(PicklePart):
+    """PicklePart with custom Python object - impossible with ArtifactPart."""
+
+    custom_obj: CustomObject | None = None
 
 
 class ArtifactTestMetadata(BaseModel):
@@ -65,6 +97,8 @@ class ArtifactTest(BaseArtifact):
     part_a: ArtifactTestPart
     part_b: ArtifactTestPart
     audio: AudioPart
+    pickle_numpy: PickleNumpyPart
+    pickle_custom: PickleCustomPart
 
 
-part_names = Literal["part_a", "part_b", "audio"]
+part_names = Literal["part_a", "part_b", "audio", "pickle_numpy", "pickle_custom"]

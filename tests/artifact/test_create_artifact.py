@@ -2,10 +2,16 @@ import enum
 from typing import Literal
 from uuid import UUID
 
+import numpy as np
 import pytest
 from pydantic import BaseModel, Field
 
-from tadween_core.types.artifact import ArtifactPart, BaseArtifact, RootModel
+from tadween_core.types.artifact import (
+    ArtifactPart,
+    BaseArtifact,
+    PicklePart,
+    RootModel,
+)
 from tadween_core.types.artifact.base import (
     _inner_type,
     _non_none_args,
@@ -32,12 +38,30 @@ class EagerDetails(BaseModel):
 class FullArtifact(BaseArtifact):
     root: SimpleRoot
     details: EagerDetails
-    text: TextPart  # should become optional automatically
-    meta: MetaPart  # should become optional automatically
+    text: TextPart
+    meta: MetaPart
 
 
 class MinimalArtifact(BaseArtifact):
     root: SimpleRoot
+
+
+class DataPart(PicklePart):
+    value: int = 0
+    name: str = ""
+
+
+class NumpyPart(PicklePart):
+    data: np.ndarray
+
+
+class _CustomData:
+    def __init__(self, x):
+        self.x = x
+
+
+class CustomPart(PicklePart):
+    obj: _CustomData
 
 
 class TestRootModel:
@@ -69,6 +93,45 @@ class TestArtifactPart:
 
         cp = CustomPart(data=object())
         assert cp.data is not None
+
+    def test_serialize_deserialize_roundtrip(self):
+        p = TextPart(content="hello world")
+        data = p.serialize()
+        restored = TextPart.deserialize(data)
+        assert restored.content == "hello world"
+
+    def test_serialize_deserialize_with_list(self):
+        p = MetaPart(tags=["a", "b", "c"])
+        data = p.serialize()
+        restored = MetaPart.deserialize(data)
+        assert restored.tags == ["a", "b", "c"]
+
+
+class TestPicklePart:
+    def test_instantiation(self):
+        p = DataPart(value=42)
+        assert p.value == 42
+
+    def test_serialize_deserialize_roundtrip(self):
+        p = DataPart(value=42, name="test")
+        data = p.serialize()
+        restored = DataPart.deserialize(data)
+        assert restored.value == 42
+        assert restored.name == "test"
+
+    def test_handles_numpy_array_without_custom_validator(self):
+        arr = np.array([1.0, 2.0, 3.0])
+        p = NumpyPart(data=arr)
+        data = p.serialize()
+        restored = NumpyPart.deserialize(data)
+        assert np.array_equal(restored.data, arr)
+
+    def test_handles_custom_object(self):
+        cd = _CustomData(x=99)
+        p = CustomPart(obj=cd)
+        data = p.serialize()
+        restored = CustomPart.deserialize(data)
+        assert restored.obj.x == 99
 
 
 class TestBaseArtifactValidDefinitions:

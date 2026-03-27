@@ -12,6 +12,8 @@ from ..shared_types import (
     ArtifactTestMetadata,
     ArtifactTestPart,
     AudioPart,
+    PickleCustomPart,
+    PickleNumpyPart,
     generate_random_array,
     part_names,
 )
@@ -160,3 +162,30 @@ class RepoContract:
 
         audio_part = repo.load_part(full_artifact.id, "audio")
         assert isinstance(audio_part, AudioPart)
+
+    def test_pickle_part_complex_types(
+        self, repo: BaseRepo, full_pickle_artifact: ArtifactTest
+    ):
+        """Test PicklePart serialization with complex types (no custom validators needed)."""
+        art_id = full_pickle_artifact.id
+        original_numpy_len = len(full_pickle_artifact.pickle_numpy.data)
+        original_custom_value = full_pickle_artifact.pickle_custom.custom_obj.value
+        original_custom_name = full_pickle_artifact.pickle_custom.custom_obj.name
+
+        repo.save(full_pickle_artifact, include="all")
+
+        loaded = repo.load(art_id, include="all")
+        assert isinstance(loaded.pickle_numpy, PickleNumpyPart)
+        assert isinstance(loaded.pickle_custom, PickleCustomPart)
+
+        assert len(loaded.pickle_numpy.data) == original_numpy_len
+        assert loaded.pickle_custom.custom_obj.value == original_custom_value
+        assert loaded.pickle_custom.custom_obj.name == original_custom_name
+
+        new_numpy = PickleNumpyPart(data=generate_random_array(150))
+        repo.save_part(art_id, "pickle_numpy", new_numpy)
+
+        updated = repo.load(art_id, include=["pickle_numpy"])
+        assert isinstance(updated.pickle_numpy, PickleNumpyPart)
+        assert len(updated.pickle_numpy.data) == 150
+        assert updated.pickle_custom is None
