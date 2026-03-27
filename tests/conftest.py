@@ -18,6 +18,9 @@ from .shared_types import (
     ArtifactTestMetadata,
     ArtifactTestPart,
     AudioPart,
+    CustomObject,
+    PickleCustomPart,
+    PickleNumpyPart,
     part_names,
 )
 
@@ -112,4 +115,26 @@ def full_artifact() -> ArtifactTest:
         part_a=ArtifactTestPart(),
         part_b=ArtifactTestPart(),
         audio=AudioPart(),
+    )
+
+
+@pytest.fixture
+def full_pickle_artifact() -> ArtifactTest:
+    """Artifact with PicklePart fields for testing binary serialization."""
+    return ArtifactTest(
+        root=ArtifactRoot(
+            stage=f"stage-{random.randint(1, 5)}",
+        ),
+        metadata=ArtifactTestMetadata(
+            checksum="pickle artifact metadata",
+            file_path=Path("/home/random_path"),
+            duration=random.randint(0, 20) + random.random(),
+        ),
+        part_a=ArtifactTestPart(),
+        part_b=ArtifactTestPart(),
+        audio=AudioPart(),
+        pickle_numpy=PickleNumpyPart(),
+        pickle_custom=PickleCustomPart(
+            custom_obj=CustomObject(value=42, name="test-object")
+        ),
     )

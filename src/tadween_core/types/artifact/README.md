@@ -13,7 +13,14 @@ Artifact fields can only be one of:`RootModel`, `BaseModel`, `BaseArtifactPart`.
 _Root_ and _eager_ fields are human readable data, so they _should_ be json serializable as json dump is the default serialization for both _root_ and _eager_ fields (they are kept as a whole.)<br>
 _Parts_ (the heavy ones) are expected to be serialized into bytes. Each `BaseArtifactPart` instance implements `serialize` and `deserialize` methods to dump serialized part into binary and vice versa (part -> model_dump -> serialize -> binary), (binary -> deserialise -> model_validate -> part).<br>
 
-`ArtifactPart` is the default _part_. It uses `msgpack`.
+### Built-in Part Types
+
+| Class | Format | Use Case |
+|---|---|---|
+| `ArtifactPart` | msgpack | Default; primitives and simple types. Or complex data types but make sure to serialize/validate them |
+| `PicklePart` | pickle | Arbitrary Python objects (numpy arrays, custom classes) |
+
+**SECURITY WARNING**: `PicklePart` can execute arbitrary code during deserialization. Only use with trusted data sources.
 
 ## Concepts
 
