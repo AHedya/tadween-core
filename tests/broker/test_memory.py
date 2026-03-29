@@ -214,6 +214,7 @@ def test_close_raises_timeout_error():
     with pytest.raises(TimeoutError):
         # Use a very small timeout
         broker.close(timeout=0.2)
+    broker.close()
 
 
 def test_robust_error_handling_in_dispatch():

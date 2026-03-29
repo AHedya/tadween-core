@@ -7,10 +7,14 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from tadween_core.broker import InMemoryBroker
 from tadween_core.repo import SqliteRepo
 from tadween_core.repo.fs import FsRepo
 from tadween_core.repo.json import FsJsonRepo
 from tadween_core.repo.s3 import S3Repo
+from tadween_core.task_queue.process_queue import ProcessTaskQueue
+from tadween_core.task_queue.thread_queue import ThreadTaskQueue
+from tadween_core.workflow.workflow import Workflow
 
 from .shared_types import (
     ArtifactRoot,
@@ -29,6 +33,37 @@ S3_TEST_PREFIX = "test-prefix"
 
 
 @pytest.fixture
+def thread_queue():
+
+    tq = ThreadTaskQueue(name="TestThreadQueue", max_workers=2, retain_results=True)
+    yield tq
+    tq.close()
+
+
+@pytest.fixture
+def process_queue():
+
+    pq = ProcessTaskQueue(name="TestProcessQueue", max_workers=2, retain_results=True)
+    yield pq
+    pq.close()
+
+
+@pytest.fixture
+def inmemory_broker():
+
+    broker = InMemoryBroker()
+    yield broker
+    broker.close(timeout=1.0)
+
+
+@pytest.fixture
+def workflow(inmemory_broker):
+    w = Workflow(broker=inmemory_broker)
+    yield w
+    w.close()
+
+
+@pytest.fixture
 def s3_client():
     with mock_aws():
         client = boto3.client("s3", region_name="us-east-1")
@@ -38,12 +73,14 @@ def s3_client():
 
 @pytest.fixture
 def s3_repo(s3_client):
-    return S3Repo[ArtifactTest, part_names](
+    repo = S3Repo[ArtifactTest, part_names](
         artifact_type=ArtifactTest,
         bucket_id=S3_TEST_BUCKET,
         prefix=S3_TEST_PREFIX,
         boto_client=s3_client,
     )
+    yield repo
+    repo.close()
 
 
 @pytest.fixture

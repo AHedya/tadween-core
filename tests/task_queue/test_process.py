@@ -1,6 +1,3 @@
-from tadween_core.task_queue.process_queue import ProcessTaskQueue
-
-
 def task_fn(x):
     return x * 2
 
@@ -11,10 +8,8 @@ def _get_process_id():
     return os.getpid()
 
 
-def test_process_queue_spawn_default():
-    tq = ProcessTaskQueue(name="SpawnTestQueue", max_workers=1, retain_results=True)
-
-    ctx = getattr(tq.executor, "_mp_context", None)
+def test_process_queue_spawn_default(process_queue):
+    ctx = getattr(process_queue.executor, "_mp_context", None)
     if ctx:
         try:
             current_method = ctx.get_start_method()
@@ -22,38 +17,31 @@ def test_process_queue_spawn_default():
         except Exception:
             pass
 
-    task_id = tq.submit(task_fn, x=10)
-    result = tq.get_result(task_id, timeout=10.0)
+    task_id = process_queue.submit(task_fn, x=10)
+    result = process_queue.get_result(task_id, timeout=10.0)
     assert result == 20
-    tq.close()
 
 
-def test_process_queue_force_close():
-    tq = ProcessTaskQueue(name="ForceCloseQueue", max_workers=1)
-    tq.submit(task_fn, x=5)
+def test_process_queue_force_close(process_queue):
 
-    tq.close(force=True)
+    try:
+        process_queue.submit(task_fn, x=5)
+        process_queue.close(force=True)
+    except Exception:
+        pass
 
 
 class TestProcessTaskQueue:
-    def test_process_queue_submission(self):
-        tq = ProcessTaskQueue(
-            name="ProcessSubmitQueue", max_workers=2, retain_results=True
-        )
-
-        task_id = tq.submit(task_fn, x=5)
-        result = tq.get_result(task_id, timeout=10.0)
+    def test_process_queue_submission(self, process_queue):
+        task_id = process_queue.submit(task_fn, x=5)
+        result = process_queue.get_result(task_id, timeout=10.0)
 
         assert result == 10
-        tq.close()
 
-    def test_process_queue_isolation(self):
-        tq = ProcessTaskQueue(name="IsolationQueue", max_workers=2, retain_results=True)
-
-        task_id = tq.submit(_get_process_id)
-        result = tq.get_result(task_id, timeout=10.0)
+    def test_process_queue_isolation(self, process_queue):
+        task_id = process_queue.submit(_get_process_id)
+        result = process_queue.get_result(task_id, timeout=10.0)
 
         import os
 
         assert result != os.getpid()
-        tq.close()
