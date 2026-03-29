@@ -15,11 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Intended Audience :: Developers",
 ]
-dependencies = [
-    "msgpack>=1.1.2",
-    "pydantic~=2.0",
-    "requests",
-]
+dependencies = ["msgpack>=1.1.2", "pydantic~=2.0", "requests"]
 
 [tool.uv]
 [project.optional-dependencies]
@@ -37,6 +33,7 @@ dev = [
     "polars>=1.37.1",
     "pyarrow>=23.0.1",
     "pytest~=9.0.2",
+    "pytest-cov>=7.1.0",
     "pytest-env~=1.2.0",
 ]
 
@@ -70,6 +67,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-pythonpath = ["src"]        
+pythonpath = ["src"]
+[tool.coverage.run]
+source = ["tadween_core"]
+omit = ["src/tadween_core/devtools/*"]
 [tool.pytest_env]
 TESTING = "1"
