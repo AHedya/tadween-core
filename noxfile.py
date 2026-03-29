@@ -3,9 +3,11 @@ from pathlib import Path
 import nox  # pyright: ignore[reportMissingImports]
 
 nox.options.default_venv_backend = "uv"
+nox.options.reuse_existing_virtualenvs = True
+PYTHON_VERSIONS = ["3.11", "3.12", "3.13", "3.14"]
 
 
-@nox.session(python=["3.11", "3.12", "3.13", "3.14"], tags=["tests"])
+@nox.session(python=PYTHON_VERSIONS, tags=["tests"])
 def tests(session):
     session.run_install(
         "uv",
@@ -23,7 +25,7 @@ def lint(session):
     session.run("ruff", "format", "--check", ".")
 
 
-@nox.session(python=["3.11", "3.12", "3.13", "3.14"], tags=["examples"])
+@nox.session(python=PYTHON_VERSIONS, tags=["examples"])
 def examples(session):
     session.run_install(
         "uv",

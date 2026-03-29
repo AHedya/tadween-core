@@ -14,7 +14,7 @@ def main():
     (ROOT / "temp").mkdir(exist_ok=True)
 
     repo = FsRepo[AudioArtifact, part_names](
-        base_path=ROOT / "temp" / "json",
+        base_path=ROOT / "temp" / "filesystem",
         artifact_type=AudioArtifact,
     )
 

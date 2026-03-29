@@ -4,6 +4,7 @@ from typing import Any
 
 from tadween_core.broker import BaseMessageBroker
 from tadween_core.exceptions import PolicyError, RoutingError
+from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.stage.policy import (
     ArtifactT,
     BucketSchemaT,
@@ -31,6 +32,7 @@ class WorkflowRoutingPolicy(
         output_topics: list[str],
         stage_name: str | None = None,
         broker: BaseMessageBroker | None = None,
+        repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
         payload_extractor: Callable[[OutputT], Any] | None = None,
         logger: logging.Logger | None = None,
     ):
@@ -38,18 +40,27 @@ class WorkflowRoutingPolicy(
         self._output_topics = output_topics
         self._stage_name = stage_name or "WorkflowRouter"
         self._broker = broker
+        self._repo = repo
         self.logger = logger or logging.getLogger("tadween.workflow.router")
 
         # Default: no payload passing
         self._payload_extractor = payload_extractor or (lambda x: {})
 
     def resolve_inputs(self, message, repo=None, cache=None):
-        return self._stage_policy.resolve_inputs(message, repo, cache)
+        return self._stage_policy.resolve_inputs(message, self._repo or repo, cache)
 
-    def intercept(self, message, broker=None, repo=None, cache=None):
+    def intercept(
+        self,
+        message,
+        broker=None,
+        repo=None,
+        cache=None,
+    ):
         active_broker = self._broker or broker
 
-        context = self._stage_policy.intercept(message, broker, repo, cache)
+        context = self._stage_policy.intercept(
+            message, broker, self._repo or repo, cache
+        )
         if not context or not context.intercepted:
             return context
 
@@ -65,7 +76,7 @@ class WorkflowRoutingPolicy(
             ),
         )
         self._stage_policy.on_success(
-            "N/A", message, context.payload, active_broker, repo, cache
+            "N/A", message, context.payload, active_broker, self._repo or repo, cache
         )
 
         if active_broker and self._output_topics:

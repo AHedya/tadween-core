@@ -30,6 +30,7 @@ class Workflow:
         broker: BaseMessageBroker,
         name: str | None = None,
         cache: Cache[BucketSchemaT] | None = None,
+        repo: BaseArtifactRepo | None = None,
         life_length: float | None = None,
         logger: Logger | None = None,
     ):
@@ -38,12 +39,14 @@ class Workflow:
             name: Workflow identifier.
             broker: Singleton message broker instance.
             cache: Singleton cache instance.
+            repo: Singleton repository instance.
             life_length: Time in seconds before the workflow is forcibly killed.
             None means infinite life.
         """
         self.broker = broker
         self.name = name or f"Workflow-{id(self):x}"
         self.cache = cache
+        self.repo = repo
         self.life_length = life_length
         self.logger = logger or getLogger(f"tadween.workflow.{self.name}")
 
@@ -115,6 +118,7 @@ class Workflow:
             broker=self.broker,
             output_topics=[],
             stage_name=name,
+            repo=self.repo,
         )
 
         stage.policy = routing_policy
