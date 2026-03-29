@@ -31,8 +31,6 @@ __all__ = [
     "set_logger",
     "__version__",
 ]
-import os
-import pathlib
-import sys
+import os,pathlib,sys
 
 x = 1+1
