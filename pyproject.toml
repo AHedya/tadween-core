@@ -35,6 +35,7 @@ dev = [
     "pytest~=9.0.2",
     "pytest-cov>=7.1.0",
     "pytest-env~=1.2.0",
+    "pytest-timeout>=2.4.0",
 ]
 
 [tool.ruff]

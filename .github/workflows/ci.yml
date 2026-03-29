@@ -40,5 +40,5 @@ jobs:
       - name: Install nox
         run: uv tool install nox
       - name: Run tests
-        timeout-minutes: 10
+        timeout-minutes: 5
         run: nox -s "tests-${{matrix.python-version}}"
