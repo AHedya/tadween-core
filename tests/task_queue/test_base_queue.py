@@ -47,6 +47,7 @@ class TestWaitAll:
         tq = ThreadTaskQueue(name="TimeoutQueue", max_workers=1)
         try:
             tq.submit(slow_task, duration=0.5)
+            tq.submit(slow_task, duration=0.5)
             with pytest.raises(TimeoutError):
                 tq.wait_all(timeout=0.2)
         finally:
