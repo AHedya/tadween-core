@@ -24,3 +24,6 @@ examples/repo/temp
 
 commit_message.md
 .coverage
+# local test
+.actrc
+.github/workflows/*.json 
