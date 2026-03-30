@@ -18,7 +18,7 @@ logger.addHandler(logging.NullHandler())
 try:
     __version__ = version("tadween-core")
 except PackageNotFoundError:
-    __version__ = "0.0.1"
+    __version__ = "0.1.0"
 
 
 __all__ = [
