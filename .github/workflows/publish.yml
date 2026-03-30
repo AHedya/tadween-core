@@ -1,0 +1,52 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  run-tests:
+    uses: ./.github/workflows/_tests.yml
+
+  publish:
+    needs: run-tests
+    name: Build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Verify tag matches pyproject.toml version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          TOML_VERSION=$(grep '^version' pyproject.toml | sed 's/.*= *"\(.*\)"/\1/')
+          if [ "$VERSION" != "$TOML_VERSION" ]; then
+            echo "ERROR: tag $TAG does not match pyproject.toml version $TOML_VERSION"
+            exit 1
+          fi
+
+      - name: Build
+        run: uv build
+
+      - name: Publish
+        run: uv publish
+
+      - name: Create GitHub release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: context.ref.replace('refs/tags/', ''),
+              name: context.ref.replace('refs/tags/', ''),
+              generate_release_notes: true
+            });

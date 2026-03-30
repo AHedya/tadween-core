@@ -1844,8 +1844,8 @@ wheels = [
 
 [[package]]
 name = "tadween-core"
-version = "0.0.1"
-source = { virtual = "." }
+version = "0.1.0a1"
+source = { editable = "." }
 dependencies = [
     { name = "msgpack" },
     { name = "pydantic" },
