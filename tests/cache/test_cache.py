@@ -1,22 +1,13 @@
-from dataclasses import dataclass
-
 import pytest
 
 from tadween_core.cache.cache import Cache
 from tadween_core.cache.policy import CachePolicy
 
-
-@dataclass
-class SimpleSchema:
-    field1: str | None = None
-    field2: int | None = None
-    field3: list | None = None
+from .shared import SimpleSchema
 
 
-def test_cache_basic_crud():
+def test_cache_basic_crud(cache):
     """Test basic create, read, update, delete operations."""
-    cache = Cache(SimpleSchema)
-
     # Create
     bucket_data = SimpleSchema(field1="hello", field2=42)
     assert cache.set_bucket("key1", bucket_data) is True
@@ -40,10 +31,8 @@ def test_cache_basic_crud():
     assert cache.delete_bucket("key1") is False
 
 
-def test_get_or_create():
+def test_get_or_create(cache):
     """Test get_or_create returns existing bucket or creates new one."""
-    cache = Cache(SimpleSchema)
-
     # Create new bucket
     bucket1 = cache.get_or_create("key1")
     assert bucket1 is not None
@@ -56,10 +45,8 @@ def test_get_or_create():
     # Note: Proxies are fresh objects but point to same internal state
 
 
-def test_dictionary_interface_contains():
+def test_dictionary_interface_contains(cache):
     """Test __contains__ method."""
-    cache = Cache(SimpleSchema)
-
     assert "key1" not in cache
 
     bucket_data = SimpleSchema(field1="test")
@@ -69,10 +56,8 @@ def test_dictionary_interface_contains():
     assert "key2" not in cache
 
 
-def test_dictionary_interface_len():
+def test_dictionary_interface_len(cache):
     """Test __len__ method."""
-    cache = Cache(SimpleSchema)
-
     assert len(cache) == 0
 
     cache.get_or_create("key1")
@@ -88,10 +73,8 @@ def test_dictionary_interface_len():
     assert len(cache) == 0
 
 
-def test_dictionary_interface_keys():
+def test_dictionary_interface_keys(cache):
     """Test keys() method."""
-    cache = Cache(SimpleSchema)
-
     assert cache.keys() == []
 
     cache.get_or_create("key1")
@@ -105,10 +88,8 @@ def test_dictionary_interface_keys():
     assert "key3" in keys
 
 
-def test_dictionary_interface_getitem():
+def test_dictionary_interface_getitem(cache):
     """Test __getitem__ method."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="test")
     cache.set_bucket("key1", bucket_data)
 
@@ -119,10 +100,8 @@ def test_dictionary_interface_getitem():
     assert cache["nonexistent"] is None
 
 
-def test_dictionary_interface_setitem():
+def test_dictionary_interface_setitem(cache):
     """Test __setitem__ method."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="test")
     cache["key1"] = bucket_data
 
@@ -131,10 +110,8 @@ def test_dictionary_interface_setitem():
     assert bucket.field1 == "test"
 
 
-def test_dictionary_interface_delitem():
+def test_dictionary_interface_delitem(cache):
     """Test __delitem__ method."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="test")
     cache.set_bucket("key1", bucket_data)
 
@@ -145,10 +122,8 @@ def test_dictionary_interface_delitem():
         del cache["key1"]
 
 
-def test_clear():
+def test_clear(cache):
     """Test clear() method removes all buckets."""
-    cache = Cache(SimpleSchema)
-
     cache.get_or_create("key1")
     cache.get_or_create("key2")
     cache.get_or_create("key3")
@@ -163,10 +138,8 @@ def test_clear():
     assert cache.get_bucket("key3") is None
 
 
-def test_get_field():
+def test_get_field(cache):
     """Test get_field() method for direct field access."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="hello", field2=42)
     cache.set_bucket("key1", bucket_data)
 
@@ -185,10 +158,8 @@ def test_get_field():
         cache.get_field("key1", "invalid")
 
 
-def test_get_field_entry():
+def test_get_field_entry(cache):
     """Test get_field_entry() method for metadata inspection."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="hello", field2=42)
     cache.set_bucket("key1", bucket_data)
 
@@ -213,10 +184,8 @@ def test_get_field_entry():
         cache.get_field_entry("key1", "invalid")
 
 
-def test_get_raw_internal():
+def test_get_raw_internal(cache):
     """Test get_raw_internal() for advanced access."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="hello", field2=42)
     cache.set_bucket("key1", bucket_data)
 
@@ -232,10 +201,8 @@ def test_get_raw_internal():
     assert cache.get_raw_internal("nonexistent") is None
 
 
-def test_set_entry():
+def test_set_entry(cache):
     """Test set_entry() method for direct field updates."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="original")
     cache.set_bucket("key1", bucket_data)
 
@@ -269,10 +236,8 @@ def test_set_bucket_trim_false():
     assert cache.get_bucket("key1") is None
 
 
-def test_proxy_set_entry():
+def test_proxy_set_entry(cache):
     """Test proxy set_entry() method."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="original")
     cache.set_bucket("key1", bucket_data)
 
@@ -291,10 +256,8 @@ def test_proxy_set_entry():
         bucket.set_entry("invalid", "value")
 
 
-def test_proxy_to_instance():
+def test_proxy_to_instance(cache):
     """Test proxy to_instance() method."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="hello", field2=42)
     cache.set_bucket("key1", bucket_data)
 
@@ -309,10 +272,8 @@ def test_proxy_to_instance():
     assert instance is not bucket  # Should be different object
 
 
-def test_proxy_get_entry():
+def test_proxy_get_entry(cache):
     """Test proxy get_entry() method."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="hello")
     cache.set_bucket("key1", bucket_data)
 
@@ -333,10 +294,8 @@ def test_proxy_get_entry():
         bucket.get_entry("invalid")
 
 
-def test_proxy_repr():
+def test_proxy_repr(cache):
     """Test proxy __repr__ method."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="hello", field2=42)
     cache.set_bucket("key1", bucket_data)
 
@@ -351,31 +310,31 @@ def test_proxy_repr():
 
 def test_multiple_fields_eviction_order():
     """Test that eviction happens when bucket size limit is exceeded."""
-    policy = CachePolicy(max_bucket_size=140, eviction_strategy="lru")
+    policy = CachePolicy(max_bucket_size=400, eviction_strategy="lru")
     cache = Cache(SimpleSchema, policy=policy)
 
-    bucket = cache.get_or_create("key1")
+    try:
+        bucket = cache.get_or_create("key1")
 
-    # Add fields in order. ASCII char * 10 ~= 59
-    bucket.field1 = "a" * 10
-    bucket.field2 = "b" * 10
+        # Add fields in order. ASCII char * 10 ~= 149
+        bucket.field1 = "a" * 100
+        bucket.field2 = "b" * 100
+        # All fields should be present with larger limit
+        assert bucket.field1 is not None
+        assert bucket.field2 is not None
+        assert bucket.field3 is None
 
-    # All fields should be present with larger limit
-    assert bucket.field1 is not None
-    assert bucket.field2 is not None
-    assert bucket.field3 is None
+        bucket.field3 = "c" * 100
 
-    bucket.field3 = "c" * 10
-
-    assert bucket.field1 is None
-    assert bucket.field2 is not None
-    assert bucket.field3 is not None
+        assert bucket.field1 is None
+        assert bucket.field2 is not None
+        assert bucket.field3 is not None
+    finally:
+        cache.clear()
 
 
-def test_empty_bucket_fields():
+def test_empty_bucket_fields(cache):
     """Test that empty bucket has all fields with None values."""
-    cache = Cache(SimpleSchema)
-
     bucket = cache.get_or_create("key1")
 
     assert bucket.field1 is None
@@ -383,10 +342,8 @@ def test_empty_bucket_fields():
     assert bucket.field3 is None
 
 
-def test_update_preserves_metadata():
+def test_update_preserves_metadata(cache):
     """Test that updating a field resets its metadata."""
-    cache = Cache(SimpleSchema)
-
     bucket_data = SimpleSchema(field1="original")
     cache.set_bucket("key1", bucket_data)
 
@@ -403,3 +360,91 @@ def test_update_preserves_metadata():
     entry = cache.get_field_entry("key1", "field1")
     assert entry.read_count == 0
     assert entry.value == "updated"
+
+
+def test_manual_evict_entry_cache(cache):
+    """Test manual eviction of an entry via Cache object."""
+    cache.set_bucket("key1", SimpleSchema(field1="hello", field2=42))
+
+    initial_size = cache._bucket_sizes["key1"]
+
+    # Evict field1
+    assert cache.evict_entry("key1", "field1") is True
+    assert cache.get_field("key1", "field1") is None
+    assert cache.get_field("key1", "field2") == 42
+
+    # Size should have decreased
+    assert cache._bucket_sizes["key1"] < initial_size
+
+    # Evict already empty field
+    assert cache.evict_entry("key1", "field1") is False
+
+
+def test_manual_evict_entry_proxy(cache):
+    """Test manual eviction of an entry via BucketProxy."""
+    bucket = cache.get_or_create("key1")
+    bucket.field1 = "hello"
+    bucket.field2 = 42
+
+    initial_size = cache._bucket_sizes["key1"]
+
+    # Evict field1 via proxy.evict()
+    assert bucket.evict("field1") is True
+    assert bucket.field1 is None
+    assert bucket.field2 == 42
+    assert cache._bucket_sizes["key1"] < initial_size
+
+    # Evict field2 via del
+    del bucket.field2
+    assert bucket.field2 is None
+    assert cache.get_field("key1", "field2") is None
+
+
+def test_evict_bucket_alias(cache):
+    """Test evict_bucket alias."""
+    cache.set_bucket("key1", SimpleSchema(field1="hello"))
+
+    assert "key1" in cache
+    assert cache.evict_bucket("key1") is True
+    assert "key1" not in cache
+
+
+def test_evict_non_existent(cache):
+    """Test eviction of non-existent keys/fields."""
+    assert cache.evict_bucket("nonexistent") is False
+    assert cache.evict_entry("nonexistent", "field1") is False
+
+    bucket = cache.get_or_create("key1")
+    with pytest.raises(AttributeError):
+        bucket.evict("invalid_field")
+
+    with pytest.raises(AttributeError):
+        del bucket.invalid_field
+
+
+def test_immediate_eviction_on_quota_reached():
+    """Test that entry is evicted and size updated as soon as quota reaches 0."""
+    policy = CachePolicy(delete_after_reads=1)
+    cache = Cache(SimpleSchema, policy=policy)
+
+    bucket = cache.get_or_create("key1")
+    bucket.field1 = "hello"
+
+    initial_bucket_size = cache._bucket_sizes["key1"]
+    entry = cache.get_field_entry("key1", "field1")
+    assert entry.value == "hello"
+    assert entry.remaining_reads == 1
+
+    # Read once - quota reaches 0
+    val = bucket.field1
+    assert val == "hello"
+
+    # Entry should now be empty and size reduced IMMEDIATELY
+    entry_after = cache.get_field_entry("key1", "field1")
+    assert entry_after.value is None
+    assert entry_after.remaining_reads == 0
+    assert cache._bucket_sizes["key1"] < initial_bucket_size
+
+    # Subsequent read returns None
+    assert bucket.field1 is None
+    assert entry_after.remaining_reads == -1

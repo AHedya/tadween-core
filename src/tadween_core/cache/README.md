@@ -26,7 +26,8 @@ Pydantic models are validated by fields not as a model. This is because partial 
     ├── cache.py    => Implements the generic `Cache`, and eviction logic
     ├── policy.py   => Defines policy data model. Not the actual policy behavior
     ├── proxy.py    => Defines `BucketProxy`
-    └── README.md
+    ├── README.md
+    └── simple_cache.py  => Implements `SimpleCache` - thread-safe, no-eviction cache
 ```
 
 ## Usage Example
@@ -57,3 +58,55 @@ Supports various strategies to manage cache size:
 - **FIFO (First-In, First-Out)**: Evict the oldest bucket or entry.
 - **Read Quota**: Evict buckets or entries after they have been read a certain number of times. 
   ***Immediate Eviction***: When the read quota reaches zero, the memory is freed *during* that final read attempt. Subsequent reads return `None`.
+
+## Thread-Safety Warning
+
+**The `Cache` class is not thread-safe.** Concurrent access from multiple threads can lead to race conditions, corrupted state, and undefined behavior.
+
+Limitations:
+- Eviction is unsafe under concurrent access
+- `CacheEntry.touch()` modifies state on every read without synchronization
+- `_bucket_sizes` and `_bucket_last_accessed` are shared across all buckets and not protected
+
+Recommendations:
+- Use `SimpleCache` for thread-safe scenarios (recommended)
+- Avoid setting size limits (`max_buckets`, `max_bucket_size`) in concurrent workflows
+- Design workflows to have **one active `BucketProxy` at a time** per cache
+- If sharing cache across threads, ensure exclusive bucket access (different keys per thread)
+
+
+## SimpleCache
+
+A lightweight, thread-safe alternative to `Cache` for scenarios that don't need eviction, policies, or metadata tracking.
+
+**Key Differences from Cache:**
+
+| Feature | Cache | SimpleCache |
+|---------|-------|-------------|
+| Thread-safe | No | Yes (Lock) |
+| Eviction | auto if configured | manual |
+| partial bucket | Yes | No |
+| Metadata tracking | Yes (read counts, TTL, access times) | None |
+| Return type | `BucketProxy` (with tracking) | Raw schema instance |
+| Defensive copying | Yes (returns copies) | No (returns stored instance) |
+| Policies | Yes | No |
+
+**When to use SimpleCache:**
+- Thread-safe access is required (For now)
+- No eviction or size limits needed
+- Simpler key-value storage with type safety
+- Want to avoid proxy overhead
+
+**When to use Cache:**
+- Bucket sharding where partial model with field scoped validation is required.
+- Need field-level metadata (read counts, access times)
+- Need size limits per entry/bucket
+- Need eviction strategies (LRU, LFU, etc.)
+
+
+**Mutability Warning:**
+SimpleCache returns the stored instance directly. Mutating the returned instance affects the cached data:
+```python
+bucket = cache.get_bucket("key1")
+bucket.name = "modified"  # This modifies the cached instance
+```

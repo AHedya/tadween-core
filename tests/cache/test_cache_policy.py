@@ -1,17 +1,11 @@
 import time
-from dataclasses import dataclass
 
 import pytest
 
 from tadween_core.cache.cache import Cache
 from tadween_core.cache.policy import CachePolicy
 
-
-@dataclass
-class SimpleSchema:
-    field1: str | None = None
-    field2: int | None = None
-    field3: str | None = None
+from .shared import SimpleSchema
 
 
 def test_delete_after_reads():
@@ -159,54 +153,54 @@ def test_per_bucket_quota():
 
 def test_lfu_eviction():
     """Test LFU (Least Frequently Used) eviction strategy."""
-    policy = CachePolicy(max_bucket_size=150, eviction_strategy="lfu")
+    policy = CachePolicy(max_bucket_size=400, eviction_strategy="lfu")
     cache = Cache(SimpleSchema, policy=policy)
 
     bucket = cache.get_or_create("key1")
 
     # Add field1 and read it many times
-    bucket.field1 = "a" * 10
+    bucket.field1 = "a" * 100
     for _ in range(10):
         _ = bucket.field1  # field1 has 10 reads
 
     # Add field2 but don't read it much
-    bucket.field2 = "b" * 10
+    bucket.field2 = "b" * 100
     _ = bucket.field2  # field2 has 1 read
 
     # Add field3, should evict field2 (least frequently used)
-    bucket.field3 = "c" * 10
+    bucket.field3 = "c" * 100
 
-    assert bucket.field1 == "a" * 10  # Still there (10 reads)
+    assert bucket.field1 == "a" * 100  # Still there (10 reads)
     assert bucket.field2 is None  # Evicted (1 read)
-    assert bucket.field3 == "c" * 10  # Newly added
+    assert bucket.field3 == "c" * 100  # Newly added
 
 
 def test_fifo_eviction():
     """Test FIFO (First In First Out) eviction strategy."""
-    policy = CachePolicy(max_bucket_size=150, eviction_strategy="fifo")
+    policy = CachePolicy(max_bucket_size=400, eviction_strategy="fifo")
     cache = Cache(SimpleSchema, policy=policy)
 
     bucket = cache.get_or_create("key1")
 
     # Add fields in order
-    bucket.field1 = "a" * 10  # First, will be evicted
-    bucket.field2 = "b" * 10  # Second
-    bucket.field3 = "c" * 10  # Third, will evict field1
+    bucket.field1 = "a" * 100  # First, will be evicted
+    bucket.field2 = "b" * 100  # Second
+    bucket.field3 = "c" * 100  # Third, will evict field1
 
     assert bucket.field1 is None  # Evicted (oldest)
-    assert bucket.field2 == "b" * 10
-    assert bucket.field3 == "c" * 10
+    assert bucket.field2 == "b" * 100
+    assert bucket.field3 == "c" * 100
 
 
 def test_none_eviction_strategy():
     """Test 'none' eviction strategy raises RuntimeError on overflow."""
-    policy = CachePolicy(max_bucket_size=100, eviction_strategy="none")
+    policy = CachePolicy(max_bucket_size=150, eviction_strategy="none")
     cache = Cache(SimpleSchema, policy=policy)
 
     bucket = cache.get_or_create("key1")
 
     # This should work
-    bucket.field1 = "a" * 10
+    bucket.field1 = "a" * 5
 
     # This should exceed limit and raise RuntimeError
     with pytest.raises(ValueError):
