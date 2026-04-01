@@ -93,11 +93,11 @@ def test_handler_error():
         stage.submit_message(msg)
         stage.task_queue.wait_all()
 
-        assert "Handler explosion!" in str(policy.last_error)
-        assert "stage_name=ExplodingStage" in str(policy.last_error)
-        assert policy.last_error.context["task_id"] is not None
     finally:
         stage.close()
+    assert "Handler explosion!" in str(policy.last_error)
+    assert "stage_name=ExplodingStage" in str(policy.last_error)
+    assert policy.last_error.context["task_id"] is not None
 
 
 def test_policy_on_success_error():
@@ -118,9 +118,10 @@ def test_policy_on_success_error():
         stage.submit_message(msg)
         stage.task_queue.wait_all()
 
-        assert isinstance(policy.last_error, PolicyError)
-        assert "Policy on_success failed!" in str(policy.last_error)
-        assert "stage_name=SuccessPolicyStage" in str(policy.last_error)
-        assert "method=on_success" in str(policy.last_error)
     finally:
         stage.close()
+
+    assert isinstance(policy.last_error, PolicyError)
+    assert "Policy on_success failed!" in str(policy.last_error)
+    assert "stage_name=SuccessPolicyStage" in str(policy.last_error)
+    assert "method=on_success" in str(policy.last_error)
