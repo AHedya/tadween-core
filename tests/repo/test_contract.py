@@ -1,3 +1,4 @@
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TypeAlias
@@ -118,6 +119,8 @@ class RepoContract:
     def test_concurrent_writes(self, repo: BaseRepo, full_artifact: ArtifactTest):
         id = full_artifact.id
         repo.save(full_artifact)
+        n_workers = 10
+        barrier = threading.Barrier(n_workers, timeout=3)
 
         def worker(i):
             # Each worker updates metadata
@@ -125,6 +128,7 @@ class RepoContract:
             full_artifact.metadata = ArtifactTestMetadata(
                 checksum=f"worker-{i}", audio_path=Path(f"/{i}")
             )
+            barrier.wait()
             repo.save(full_artifact, include=None)
             return True
 
