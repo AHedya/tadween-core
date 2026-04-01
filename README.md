@@ -72,6 +72,12 @@ uv run pytest
 uv run pytest -v -s
 ```
 
+For free-threaded tests:
+
+```bash
+PYTHON_GIL=0 uv run --python 3.14t pytest
+```
+
 ## Logger
 
 The library logger follows Python best practices and is **silent by default**. To quickly configure logging, use `tadween_core.set_logger`, which sets up a default logger configuration for the parent. Review the implementation [here](./src/tadween_core/_logging.py).<br>

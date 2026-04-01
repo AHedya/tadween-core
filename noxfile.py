@@ -15,7 +15,7 @@ def tests(session):
         f"--python={session.virtualenv.location}",
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
-    session.run("pytest")
+    session.run("pytest", *session.posargs)
 
 
 @nox.session(python="3.11", tags=["style"])
@@ -23,6 +23,17 @@ def lint(session):
     session.run_install("uv", "pip", "install", "ruff")
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")
+
+
+@nox.session(python=["3.14t"], tags=["ft_tests"])
+def free_threaded_tests(session):
+    session.run_install(
+        "uv",
+        "sync",
+        f"--python={session.virtualenv.location}",
+        env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
+    )
+    session.run("pytest", *session.posargs, env={"PYTHON_GIL": "0"})
 
 
 @nox.session(python=PYTHON_VERSIONS, tags=["examples"])
