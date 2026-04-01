@@ -188,6 +188,7 @@ class TestStagePolicy:
 
         stage.submit({"value": 10})
         stage.task_queue.wait_all()
+        stage.close()
 
         assert len(success_results) == 1
         assert success_results[0][1].result == "processed_10"
@@ -206,7 +207,7 @@ class TestStagePolicy:
         )
 
         stage.submit({"value": 1})
-        stage.task_queue.wait_all()
+        stage.close()
 
         assert len(errors) == 1
         assert "Handler failure!" in str(errors[0])
@@ -254,9 +255,8 @@ class TestStagePolicyBuilder:
         )
 
         stage = create_stage(SuccessHandler(), name="BuilderStage", policy=policy)
-
         stage.submit({"value": 1})
-        stage.task_queue.wait_all()
+        stage.close()
 
         assert len(calls) == 1
         assert calls[0] == ("success", "processed_777")
@@ -271,7 +271,7 @@ class TestStagePolicyBuilder:
         stage = create_stage(FailingHandler(), name="BuilderErrorStage", policy=policy)
 
         stage.submit({"value": 1})
-        stage.task_queue.wait_all()
+        stage.close()
 
         assert len(errors) == 1
         assert "Handler failure!" in errors[0]
