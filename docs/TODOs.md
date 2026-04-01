@@ -9,4 +9,4 @@
   - [ ] Proxy stale reference: If Cache clears a bucket while the proxy still holds the reference to internal `Cache._store`, this leads to in-consistent clear (no GC due to reference is still hold).
 
 ## Task Queue
-- [ ] Add synchronization to callback test cases. No-GIL builds (3.14t) make callback side-effects tests flaky.
+- [x] Add synchronization to callback test cases. No-GIL builds (3.14t) make callback side-effects tests flaky.
