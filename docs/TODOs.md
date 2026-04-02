@@ -10,3 +10,8 @@
 
 ## Task Queue
 - [x] Add synchronization to callback test cases. No-GIL builds (3.14t) make callback side-effects tests flaky.
+
+## Library validation & early quit.
+- [ ] Add early validation for library component to get better error resolution if happened. For example:
+  - [ ] policy decorators being decorating incompatible events
+  - [ ] 

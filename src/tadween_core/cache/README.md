@@ -22,7 +22,7 @@ Pydantic models are validated by fields not as a model. This is because partial 
 └── cache
     ├── __init__.py 
     ├── adapter.py  => Defines `SchemaAdapter` contract, implements `DataclassAdapter`, `PydanticAdapter` and adapter factory
-    ├── base.py     => Intended for shared types. Only defines `CacheEntry`
+    ├── base.py     => Defines `BaseCache` interface and `CacheEntry` for `Cache` implementation
     ├── cache.py    => Implements the generic `Cache`, and eviction logic
     ├── policy.py   => Defines policy data model. Not the actual policy behavior
     ├── proxy.py    => Defines `BucketProxy`
