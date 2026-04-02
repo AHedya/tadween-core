@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 from typing_extensions import ParamSpec
 
 from tadween_core.broker import Message
-from tadween_core.cache.cache import Cache
+from tadween_core.cache.base import BaseCache
 from tadween_core.task_queue.base import TaskEnvelope
 
 P = ParamSpec("P")
@@ -76,19 +76,37 @@ def write_cache(
             result: Any,
             broker: Any = None,
             repo: Any = None,
-            cache: Cache[Any] | None = None,
+            cache: BaseCache[Any] | None = None,
         ) -> None:
             bucket_key = message.metadata.get(cache_key) if message.metadata else None
 
             def do_write() -> None:
                 if bucket_key is not None and cache is not None:
-                    bucket = cache.get_or_create(bucket_key)
+                    with cache.lock:
+                        bucket = cache.get_bucket(bucket_key)
 
-                    for cf, rf in zip(cache_field, result_field, strict=True):
-                        value = getattr(result, rf, None) if rf is not None else result
+                        if bucket is None:
+                            values = {}
+                            for cf, rf in zip(cache_field, result_field, strict=True):
+                                value = (
+                                    getattr(result, rf, None)
+                                    if rf is not None
+                                    else result
+                                )
+                                if value is not None:
+                                    values[cf] = value
 
-                        if value is not None:
-                            setattr(bucket, cf, value)
+                            bucket = cache.schema_type(**values)
+                            cache.set_bucket(bucket_key, bucket)
+                        else:
+                            for cf, rf in zip(cache_field, result_field, strict=True):
+                                value = (
+                                    getattr(result, rf, None)
+                                    if rf is not None
+                                    else result
+                                )
+                                if value is not None:
+                                    setattr(bucket, cf, value)
 
             if mode == "before":
                 do_write()

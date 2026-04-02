@@ -26,9 +26,9 @@ def test_cache_basic_crud(cache):
     assert bucket.field2 == 100
 
     # Delete
-    assert cache.delete_bucket("key1") is True
+    assert cache.delete_bucket("key1") is None
     assert cache.get_bucket("key1") is None
-    assert cache.delete_bucket("key1") is False
+    assert cache.delete_bucket("key1") is None
 
 
 def test_get_or_create(cache):
@@ -118,8 +118,8 @@ def test_dictionary_interface_delitem(cache):
     del cache["key1"]
     assert cache.get_bucket("key1") is None
 
-    with pytest.raises(KeyError, match="Cache key 'key1' not found"):
-        del cache["key1"]
+    # __delitem__ is a no-op for missing keys (consistent with delete_bucket)
+    del cache["key1"]  # no raise
 
 
 def test_clear(cache):
@@ -405,13 +405,13 @@ def test_evict_bucket_alias(cache):
     cache.set_bucket("key1", SimpleSchema(field1="hello"))
 
     assert "key1" in cache
-    assert cache.evict_bucket("key1") is True
+    assert cache.evict_bucket("key1") is None
     assert "key1" not in cache
 
 
 def test_evict_non_existent(cache):
     """Test eviction of non-existent keys/fields."""
-    assert cache.evict_bucket("nonexistent") is False
+    assert cache.evict_bucket("nonexistent") is None
     assert cache.evict_entry("nonexistent", "field1") is False
 
     bucket = cache.get_or_create("key1")

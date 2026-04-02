@@ -1,5 +1,6 @@
 from typing import Any
 
+from .base import BaseCache
 from .cache import BucketSchemaT, Cache
 from .policy import CachePolicy
 from .simple_cache import SimpleCache
@@ -66,4 +67,4 @@ def get_simple_cache(
     return _simple_cache_singleton
 
 
-__all__ = ["Cache", "get_cache", "SimpleCache"]
+__all__ = ["BaseCache", "Cache", "get_cache", "SimpleCache"]
