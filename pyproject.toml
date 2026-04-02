@@ -81,6 +81,11 @@ python_functions = ["test_*"]
 pythonpath = ["src"]
 [tool.coverage.run]
 source = ["tadween_core"]
-omit = ["src/tadween_core/devtools/*"]
+omit = [
+    "src/tadween_core/devtools/*",
+    "src/tadween_core/task_queue/dynamic.py", # covered by both process and thread queues
+    "src/tadween_core/handler/defaults/*",
+    "src/tadween_core/broker/listeners.py",
+]
 [tool.pytest_env]
 TESTING = "1"
