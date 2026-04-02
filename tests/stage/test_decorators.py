@@ -205,7 +205,9 @@ class TestWriteCache:
             on_success = write_cache(
                 cache_field="cached_audio", result_field="audio_array"
             )(
-                lambda self, task_id, message, result, broker=None, repo=None, cache=None: None
+                lambda self, task_id, message, result, broker=None, repo=None, cache=None: (
+                    None
+                )
             )
             on_success(policy, f"task-{thread_id}", message, result, cache=cache)
 
