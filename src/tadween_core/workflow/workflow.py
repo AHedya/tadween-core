@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing_extensions import TypeVar
 
 from tadween_core.broker import BaseMessageBroker, Message
-from tadween_core.cache import Cache
+from tadween_core.cache.base import BaseCache
 from tadween_core.handler import BaseHandler, HandlerFactory, InputT, OutputT
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.stage.policy import DefaultStagePolicy, StagePolicy
@@ -29,7 +29,7 @@ class Workflow:
         self,
         broker: BaseMessageBroker,
         name: str | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
         repo: BaseArtifactRepo | None = None,
         life_length: float | None = None,
         logger: Logger | None = None,

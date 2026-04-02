@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing_extensions import TypeVar
 
 from tadween_core.broker import BaseMessageBroker, Message
-from tadween_core.cache.cache import Cache
+from tadween_core.cache.base import BaseCache
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.task_queue.base import TaskEnvelope
 from tadween_core.types.artifact.base import BaseArtifact
@@ -60,7 +60,7 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNa
         self,
         message: Message,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ) -> InputT | dict:
         """
         Control hook: called after a False intercept, before task execution.
@@ -80,7 +80,7 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNa
         message: Message,
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ) -> InterceptionContext[OutputT]:
         """
         Control hook:  called first on every message. Determines whether the
@@ -124,7 +124,7 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNa
         result: OutputT,
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ):
         """
         Notification hook — fired when the handler completes successfully.
@@ -179,7 +179,7 @@ class DefaultStagePolicy(
         self,
         message: Message,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ) -> InputT | dict:
         return getattr(message, "payload", {})
 
@@ -188,7 +188,7 @@ class DefaultStagePolicy(
         message: Message,
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ) -> InterceptionContext[OutputT]:
         return InterceptionContext(intercepted=False, payload=None)
 
@@ -205,7 +205,7 @@ class DefaultStagePolicy(
         result: OutputT,
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ):
         pass
 
@@ -224,7 +224,7 @@ ResolveInputsFn: TypeAlias = Callable[
         Message,
         BaseMessageBroker | None,
         BaseArtifactRepo[ArtifactT, PartNameT] | None,
-        Cache[BucketSchemaT] | None,
+        BaseCache[BucketSchemaT] | None,
     ],
     InputT | dict,
 ]
@@ -234,7 +234,7 @@ InterceptFn: TypeAlias = Callable[
         Message,
         BaseMessageBroker | None,
         BaseArtifactRepo[ArtifactT, PartNameT] | None,
-        Cache[BucketSchemaT] | None,
+        BaseCache[BucketSchemaT] | None,
     ],
     InterceptionContext[OutputT],
 ]
@@ -250,7 +250,7 @@ OnSuccessFn: TypeAlias = Callable[
         OutputT,
         BaseMessageBroker | None,
         BaseArtifactRepo[ArtifactT, PartNameT] | None,
-        Cache[BucketSchemaT] | None,
+        BaseCache[BucketSchemaT] | None,
     ],
     None,
 ]
@@ -287,7 +287,7 @@ class StagePolicyBuilder(
     def with_resolve_inputs(
         self,
         fn: Callable[
-            [Message, BaseArtifactRepo | None, Cache[BucketSchemaT] | None],
+            [Message, BaseArtifactRepo | None, BaseCache[BucketSchemaT] | None],
             InputT | dict,
         ],
     ) -> "StagePolicyBuilder[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]":
@@ -302,7 +302,7 @@ class StagePolicyBuilder(
                 Message,
                 BaseMessageBroker | None,
                 BaseArtifactRepo | None,
-                Cache[BucketSchemaT] | None,
+                BaseCache[BucketSchemaT] | None,
             ],
             InterceptionContext[OutputT],
         ],
@@ -334,7 +334,7 @@ class StagePolicyBuilder(
                 OutputT,
                 BaseMessageBroker | None,
                 BaseArtifactRepo | None,
-                Cache[BucketSchemaT] | None,
+                BaseCache[BucketSchemaT] | None,
             ],
             None,
         ],
@@ -360,7 +360,7 @@ class StagePolicyBuilder(
         self,
         message: Message,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ) -> InputT | dict:
         if self._resolve_inputs_fn:
             return self._resolve_inputs_fn(message, repo, cache)
@@ -371,7 +371,7 @@ class StagePolicyBuilder(
         message: Message,
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ) -> InterceptionContext[OutputT]:
         if self._intercept_fn:
             return self._intercept_fn(message, broker, repo, cache)
@@ -396,7 +396,7 @@ class StagePolicyBuilder(
         result: OutputT,
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
     ):
         if self._on_success_fn:
             self._on_success_fn(task_id, message, result, broker, repo, cache)

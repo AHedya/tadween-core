@@ -12,7 +12,7 @@ from .shared import AnotherSchema, SimpleSchema
 class TestBasicCRUD:
     def test_set_and_get_bucket(self, simple_cache):
         bucket_data = SimpleSchema(field1="hello", field2=42)
-        assert simple_cache.set_bucket("key1", bucket_data) is None
+        assert simple_cache.set_bucket("key1", bucket_data) is True
 
         result = simple_cache.get_bucket("key1")
         assert result is not None

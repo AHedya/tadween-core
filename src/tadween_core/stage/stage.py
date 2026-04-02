@@ -6,7 +6,7 @@ from typing import Any, Generic, get_args, get_origin, get_type_hints
 from pydantic import BaseModel, ValidationError
 
 from tadween_core.broker import BaseMessageBroker, Message
-from tadween_core.cache import Cache
+from tadween_core.cache.base import BaseCache
 from tadween_core.exceptions import (
     HandlerError,
     InputValidationError,
@@ -38,7 +38,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         policy: StagePolicy[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]
         | None = None,
         repo: BaseArtifactRepo | None = None,
-        cache: Cache[BucketSchemaT] | None = None,
+        cache: BaseCache[BucketSchemaT] | None = None,
         logger: Logger | None = None,
         broker: BaseMessageBroker | None = None,
         task_queue: BaseTaskQueue[OutputT] | None = None,

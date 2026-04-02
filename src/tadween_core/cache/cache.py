@@ -1,5 +1,6 @@
 import logging
 import sys
+import threading
 import time
 from typing import Any, Generic, TypeVar
 
@@ -37,6 +38,11 @@ class Cache(Generic[BucketSchemaT]):
         self._bucket_sizes: dict[str, int] = {}
         self._bucket_last_accessed: dict[str, float] = {}
         self.logger = logger or logging.getLogger(f"tadween.cache.{id(self):x}")
+        self.lock = threading.RLock()
+
+    @property
+    def schema_type(self) -> type[BucketSchemaT]:
+        return self._schema_type
 
     def get_bucket(self, key: str) -> (
         BucketProxy[BucketSchemaT] | BucketSchemaT
@@ -135,20 +141,18 @@ class Cache(Generic[BucketSchemaT]):
         self._bucket_last_accessed[key] = time.perf_counter()
         return self._create_proxy(key, internal)
 
-    def delete_bucket(self, key: str) -> bool:
+    def delete_bucket(self, key: str) -> None:
         """
         Remove a bucket from the cache.
         Args:
             key: Cache key
         Returns:
-            True if the bucket existed and was deleted, False otherwise
+            None
         """
         if key in self._store:
             del self._store[key]
             self._bucket_sizes.pop(key, None)
             self._bucket_last_accessed.pop(key, None)
-            return True
-        return False
 
     def evict_bucket(self, key: str) -> bool:
         """Alias for delete_bucket."""
@@ -195,8 +199,7 @@ class Cache(Generic[BucketSchemaT]):
         self.set_bucket(key, bucket)
 
     def __delitem__(self, key: str) -> None:
-        if not self.delete_bucket(key):
-            raise KeyError(f"Cache key '{key}' not found")
+        self.delete_bucket(key)
 
     def get_raw_internal(self, key: str) -> dict[str, CacheEntry[Any]] | None:
         """

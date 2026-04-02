@@ -24,17 +24,25 @@ class SimpleCache(Generic[BucketSchemaT]):
         self._store: dict[str, BucketSchemaT] = {}
         self.lock = threading.RLock()
 
+    @property
+    def schema_type(self) -> type[BucketSchemaT]:
+        return self._schema_type
+
     def get_bucket(self, key: str) -> BucketSchemaT | None:
         """Retrieve a cached instance by key. Returns None if not found."""
         return self[key]
 
-    def set_bucket(self, key: str, bucket: BucketSchemaT) -> None:
+    def set_bucket(self, key: str, bucket: BucketSchemaT) -> bool:
         """Store an instance under key. Overwrites if exists.
+
+        Returns:
+            True if successful.
 
         Raises:
             TypeError: if bucket doesn't match specified `schema_type`
         """
         self[key] = bucket
+        return True
 
     def delete_bucket(self, key: str):
         """Remove a key from the cache. No-op if key does not exist."""
