@@ -1,18 +1,3 @@
-"""
-Comprehensive test suite for InMemoryBroker.
-
-Tests cover:
-- One-to-one communication
-- One-to-many communication
-- Topic chaining (one-to-one chain)
-- Chaining in one-to-many scenarios
-- Subscription management
-- Error handling
-- Lifecycle management
-- Concurrency and thread safety
-- Edge cases
-"""
-
 import queue
 import threading
 import time  # noqa
@@ -59,7 +44,7 @@ def test_message_id_generation(broker: InMemoryBroker):
     for i in range(3):
         broker.publish(Message(topic="test.topic", payload={"data": i}))
 
-    broker.join(timeout=2.0)
+    broker.join(timeout=5.0)
 
     assert len(messages) == 3
     assert all(msg.id is not None for msg in messages)
@@ -68,10 +53,6 @@ def test_message_id_generation(broker: InMemoryBroker):
     assert len(set(ids)) == 3
 
 
-@pytest.mark.xfail(
-    reason="Sometimes timeouts, might need to be more generous or mark as failure tolerant",
-    raises=AssertionError,
-)
 def test_one_to_one(broker: InMemoryBroker):
     # Can't reliably test with assertions in multi-threaded without using synchronization
     event = threading.Event()
@@ -83,7 +64,7 @@ def test_one_to_one(broker: InMemoryBroker):
     broker.subscribe("test.topic", handler)
     broker.publish(Message(topic="test.topic", payload={"data": "hello"}))
 
-    assert event.wait(timeout=1), "Message not received within timeout"
+    assert event.wait(timeout=5), "Message not received within timeout"
 
 
 def test_one_to_many(broker: InMemoryBroker):
@@ -132,7 +113,7 @@ def test_subscription_chain(broker: InMemoryBroker):
     broker.subscribe(next_topic, lambda x: event.set())
     broker.publish(Message(topic="test.0"))
 
-    assert event.wait(2), "didn't chain"
+    assert event.wait(timeout=5), "didn't chain"
 
 
 def test_subscription_chain_with_sideeffect(broker: InMemoryBroker):

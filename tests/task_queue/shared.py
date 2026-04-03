@@ -14,5 +14,10 @@ def slow_task(duration: float) -> str:
     return "done"
 
 
+def conditional_slow_task(event, duration: float):
+    event.wait(3)
+    slow_task(duration)
+
+
 def failing_task(msg: str = "Task failed!") -> None:
     raise ValueError(msg)
