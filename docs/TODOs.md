@@ -14,4 +14,8 @@
 ## Library validation & early quit.
 - [ ] Add early validation for library component to get better error resolution if happened. For example:
   - [ ] policy decorators being decorating incompatible events
-  - [ ] 
+
+## Retry mechanism
+- [ ] design
+- [ ] implement
+- [ ] test
