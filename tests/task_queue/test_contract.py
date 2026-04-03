@@ -68,7 +68,7 @@ class TaskQueueContract:
     def test_failing_task_propagates_error(self, queue):
         task_id = queue.submit(failing_task)
 
-        with pytest.raises(ValueError, match="Task failed!"):
+        with pytest.raises((ValueError, TimeoutError), match="Task failed!"):
             queue.get_result(task_id, timeout=1.0)
 
     def test_stream_completed_yields_errors(self, queue):

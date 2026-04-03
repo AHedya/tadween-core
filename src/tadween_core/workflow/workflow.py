@@ -68,6 +68,7 @@ class Workflow:
         handler: BaseHandler[InputT, OutputT] | HandlerFactory,
         *,
         policy: StagePolicy | None = None,
+        cache: BaseCache | None = None,
         repo: BaseArtifactRepo | None = None,
         task_queue: BaseTaskQueue | None = None,
     ) -> "Workflow":
@@ -89,8 +90,9 @@ class Workflow:
             handler=handler_instance,
             name=name,
             policy=policy or DefaultStagePolicy(),
-            repo=repo,
-            cache=self.cache,
+            # override workflow-wide infra
+            repo=repo or self.repo,
+            cache=cache or self.cache,
             task_queue=task_queue,
         )
 
