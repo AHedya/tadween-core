@@ -81,6 +81,7 @@ def write_cache(
             bucket_key = message.metadata.get(cache_key) if message.metadata else None
 
             def do_write() -> None:
+                # TODO: determine whether a warning message if there's no bucket or there's no cache is enough, or fail loudly
                 if bucket_key is not None and cache is not None:
                     with cache.lock:
                         bucket = cache.get_bucket(bucket_key)
