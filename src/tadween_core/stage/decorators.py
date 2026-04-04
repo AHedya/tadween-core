@@ -5,6 +5,7 @@ common patterns like caching, timing, and error logging.
 """
 
 import functools
+import re
 from collections.abc import Callable
 from typing import Any, Literal, cast
 
@@ -12,6 +13,8 @@ from typing_extensions import ParamSpec
 
 from tadween_core.broker import Message
 from tadween_core.cache.base import BaseCache
+from tadween_core.repo.base import BaseArtifactRepo
+from tadween_core.stage.policy import InterceptionContext
 from tadween_core.task_queue.base import TaskEnvelope
 
 P = ParamSpec("P")
@@ -236,6 +239,114 @@ def log_errors(
             else:
                 method(self, message, error, broker)
                 do_log()
+
+        return wrapper
+
+    return decorator
+
+
+def check_repo(
+    aid: str,
+    condition: str,
+) -> Callable[
+    [Callable[P, InterceptionContext[Any]]], Callable[P, InterceptionContext[Any]]
+]:
+    """
+    Decorator for `intercept` stage policy event that checks repo for artifact parts.
+
+    Evaluates a condition string against the artifact loaded from the repo.
+    Returns InterceptionContext(intercepted=True) if condition is met.
+    Otherwise delegates to the original intercept method.
+
+    Args:
+        aid: Metadata key for the artifact ID.
+        condition: String representing logic to check. Names are artifact fields
+            (use dotted names for nesting). Supports '&' (and), '|' (or), and '()'.
+
+    Example:
+        ```python
+        # Check if diarization part exists and has speakers field not None
+        @check_repo(aid="artifact_id", condition="diarization.speakers")
+        def intercept(self, message, broker=None, repo=None, cache=None):
+            pass
+
+        # Complex condition with multiple parts
+        @check_repo(
+            aid="audio_id",
+            condition="audio | transcript & (meta.is_valid | valid)"
+        )
+        def intercept(self, message, broker=None, repo=None, cache=None):
+            pass
+        ```
+    """
+    # Extract identifiers (dotted paths) and operators
+    tokens = re.findall(
+        r"[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*|[&|()]", condition.replace(" ", "")
+    )
+
+    def decorator(
+        method: Callable[P, InterceptionContext[Any]],
+    ) -> Callable[P, InterceptionContext[Any]]:
+        @functools.wraps(method)
+        def wrapper(
+            self: Any,
+            message: Message,
+            broker: Any = None,
+            repo: BaseArtifactRepo | None = None,
+            cache: BaseCache[Any] | None = None,
+        ) -> InterceptionContext[Any]:
+            if repo is None:
+                return method(self, message, broker, repo, cache)
+
+            artifact_id = message.metadata.get(aid) if message.metadata else None
+            if not artifact_id:
+                return method(self, message, broker, repo, cache)
+
+            # Determine required parts
+            valid_parts = set(repo._part_map.keys())
+            parts_to_load = set()
+            for token in tokens:
+                if token not in ("&", "|", "(", ")"):
+                    top_level = token.split(".")[0]
+                    if top_level in valid_parts:
+                        parts_to_load.add(top_level)
+
+            # Load artifact
+            try:
+                artifact = repo.load(artifact_id, include=list(parts_to_load))
+            except Exception:
+                artifact = None
+
+            # Evaluate condition
+            expr_parts = []
+            for token in tokens:
+                if token in ("&", "|", "(", ")"):
+                    expr_parts.append(token)
+                else:
+                    val = False
+                    if artifact is not None:
+                        obj = artifact
+                        path_parts = token.split(".")
+                        valid = True
+                        for p in path_parts:
+                            if not hasattr(obj, p):
+                                valid = False
+                                break
+                            obj = getattr(obj, p)
+                        if valid and obj is not None:
+                            val = True
+                    expr_parts.append("True" if val else "False")
+
+            try:
+                # Safe to eval since expr_parts only contains True, False, and operators
+                is_intercepted = eval(" ".join(expr_parts), {"__builtins__": {}})
+            except Exception:
+                is_intercepted = False
+
+            if is_intercepted:
+                return InterceptionContext(intercepted=True)
+
+            return method(self, message, broker, repo, cache)
 
         return wrapper
 
