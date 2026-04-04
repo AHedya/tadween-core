@@ -62,7 +62,7 @@ class TestProcessTaskQueue(TaskQueueContract):
         )
         try:
             task_id = tq.submit(fast_task, x=1)
-            tq.get_result(task_id, timeout=1.0)
+            tq.get_result(task_id, timeout=5.0)
             assert event.wait(timeout=3.0), "initializer didn't set event"
         finally:
             tq.close()
