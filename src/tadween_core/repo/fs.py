@@ -9,7 +9,7 @@ from typing import Any
 
 from tadween_core.types.artifact.part import BaseArtifactPart
 
-from .base import ART, BaseArtifactRepo, PartNameT
+from .base import ART, BaseArtifactRepo, CriteriaDict, PartNameT
 
 
 class LockMode(Enum):
@@ -126,6 +126,62 @@ class FsRepo(BaseArtifactRepo[ART, PartNameT]):
 
     def exists(self, artifact_id: str) -> bool:
         return (self._get_dir(artifact_id) / "root.json").exists()
+
+    def filter(
+        self,
+        criteria: CriteriaDict,
+        include=None,
+        max_len: int | None = None,
+        **options: Any,
+    ) -> dict[str, ART]:
+        matching_ids = self._get_matching_ids(criteria, max_len)
+        if isinstance(include, Sequence):
+            include = [include] * len(matching_ids)
+        results = self.load_many(matching_ids, include, **options)
+        return {k: v for k, v in results.items() if v is not None}
+
+    def list_parts(
+        self,
+        criteria: CriteriaDict,
+        max_len: int | None = None,
+    ) -> dict[str, dict[str, bool]]:
+        matching_ids = self._get_matching_ids(criteria, max_len)
+        result = {}
+        for aid in matching_ids:
+            parts_info = {}
+            for part_name in self._part_map.keys():
+                parts_info[part_name] = self._get_part_path(aid, part_name).exists()
+            result[aid] = parts_info
+        return result
+
+    def _get_matching_ids(
+        self, criteria: CriteriaDict, max_len: int | None = None
+    ) -> list[str]:
+        self._validate_criteria(criteria)
+        matching_ids = []
+        for artifact_dir in self.base_path.iterdir():
+            if not artifact_dir.is_dir():
+                continue
+            artifact_id = artifact_dir.name
+
+            try:
+                with self._lock_artifact(artifact_id, LockMode.SHARED):
+                    if not self.exists(artifact_id):
+                        continue
+                    root_json = self._read_root(artifact_id)
+            except (FileNotFoundError, OSError):
+                continue
+
+            try:
+                root_dict = json.loads(root_json)
+            except json.JSONDecodeError:
+                continue
+
+            if self._match_criteria(root_dict.get("root", {}), criteria):
+                matching_ids.append(artifact_id)
+                if max_len is not None and len(matching_ids) >= max_len:
+                    break
+        return matching_ids
 
     def _deserialize_model(self, data: dict[str, Any]) -> ART:
         model = json.loads(data.pop("root"))

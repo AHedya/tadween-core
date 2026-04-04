@@ -193,3 +193,101 @@ class RepoContract:
         assert isinstance(updated.pickle_numpy, PickleNumpyPart)
         assert len(updated.pickle_numpy.data) == 150
         assert updated.pickle_custom is None
+
+    def test_filter(self, repo: BaseRepo, artifact_metadata: ArtifactTestMetadata):
+        # Create artifacts for filtering
+        art1 = ArtifactTest(
+            root=ArtifactRoot(id="filter-1", stage="init", created_at=10.0),
+            metadata=artifact_metadata,
+        )
+        art2 = ArtifactTest(
+            root=ArtifactRoot(id="filter-2", stage="init", created_at=20.0),
+            metadata=artifact_metadata,
+        )
+        art3 = ArtifactTest(
+            root=ArtifactRoot(id="filter-3", stage="done", created_at=30.0),
+            metadata=artifact_metadata,
+        )
+
+        repo.save_many([art1, art2, art3])
+
+        # Exact match (implicit 'eq')
+        res = repo.filter({"stage": "init"})
+        assert set(res.keys()) == {"filter-1", "filter-2"}
+
+        # Tuple match (operator 'gt')
+        res = repo.filter({"created_at": (20.0, "gt")})
+        assert set(res.keys()) == {"filter-3"}
+
+        # Multiple criteria
+        res = repo.filter({"stage": ("init", "eq"), "created_at": (15.0, "lt")})
+        assert set(res.keys()) == {"filter-1"}
+
+        # Test max_len parameter
+        res_all = repo.filter({})
+        assert len(res_all) >= 3
+        res_limit = repo.filter({}, max_len=2)
+        assert len(res_limit) == 2
+
+        # Test max_len with criteria
+        res_init_limit = repo.filter({"stage": "init"}, max_len=1)
+        assert len(res_init_limit) == 1
+        assert list(res_init_limit.keys())[0] in {"filter-1", "filter-2"}
+
+        # Complex case 1: Empty results
+        res_empty = repo.filter({"stage": "nonexistent"})
+        assert len(res_empty) == 0
+
+        # Complex case 2: Filtering by 'id' explicitly with 'ne' operator
+        res_ne = repo.filter({"id": ("filter-2", "ne"), "stage": "init"})
+        assert set(res_ne.keys()) == {"filter-1"}
+
+        # Complex case 3: Using 'include' parameter to load a specific part during filter
+        art1.part_a = ArtifactTestPart(content="part_a_data")
+        repo.save(art1, include=["part_a"])
+
+        res_include = repo.filter({"id": "filter-1"}, include=["part_a"])
+        assert len(res_include) == 1
+        loaded_art = res_include["filter-1"]
+        assert loaded_art.part_a is not None
+        assert loaded_art.part_a.content == "part_a_data"
+        assert loaded_art.part_b is None
+
+        # Test validation failure for invalid RootModel field
+        with pytest.raises(ValueError, match="is not a valid RootModel field"):
+            repo.filter({"unknown_field": "val"})
+
+    def test_list_parts(self, repo: BaseRepo, artifact_metadata: ArtifactTestMetadata):
+        art1 = ArtifactTest(
+            root=ArtifactRoot(id="list-parts-1", stage="init", created_at=10.0),
+            metadata=artifact_metadata,
+        )
+        art1.part_a = ArtifactTestPart(content="part_a_data")
+
+        art2 = ArtifactTest(
+            root=ArtifactRoot(id="list-parts-2", stage="init", created_at=20.0),
+            metadata=artifact_metadata,
+        )
+        art2.part_b = ArtifactTestPart(content="part_b_data")
+        art2.audio = AudioPart()
+
+        repo.save_many([art1, art2], include="all")
+
+        # Test basic list_parts
+        parts_info = repo.list_parts({"stage": "init"})
+        assert "list-parts-1" in parts_info
+        assert "list-parts-2" in parts_info
+
+        # Check part presence for art1
+        assert parts_info["list-parts-1"]["part_a"] is True
+        assert parts_info["list-parts-1"]["part_b"] is False
+        assert parts_info["list-parts-1"]["audio"] is False
+
+        # Check part presence for art2
+        assert parts_info["list-parts-2"]["part_a"] is False
+        assert parts_info["list-parts-2"]["part_b"] is True
+        assert parts_info["list-parts-2"]["audio"] is True
+
+        # Test max_len parameter
+        parts_info_limit = repo.list_parts({"stage": "init"}, max_len=1)
+        assert len(parts_info_limit) == 1

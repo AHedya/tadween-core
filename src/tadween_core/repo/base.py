@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import Any, Generic, Literal, TypeVar
 
 from tadween_core.types.artifact import BaseArtifact
@@ -8,6 +8,10 @@ from tadween_core.types.artifact.part import BaseArtifactPart
 
 PartNameT = TypeVar("PartNameT", bound=str)
 ART = TypeVar("ART", bound=BaseArtifact)
+
+FilterOperator = Literal["eq", "ne", "gt", "lt", "ge", "le"]
+CriteriaValue = Any | tuple[Any, FilterOperator]
+CriteriaDict = dict[str, CriteriaValue]
 
 
 class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
@@ -41,7 +45,7 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
         )
 
     def _resolve_part_names(
-        self, include: Iterable[PartNameT] | Literal["all"] | None
+        self, include: Sequence[PartNameT] | Literal["all"] | None
     ) -> list[str]:
         """Translate an `include` argument into a concrete list of part names."""
         if include is None:
@@ -59,7 +63,7 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
 
     def _resolve_batch_part_names(
         self,
-        include: Iterable[Iterable[PartNameT]] | Literal["all"] | None,
+        include: Sequence[Sequence[PartNameT]] | Literal["all"] | None,
         batch_len: int,
     ) -> list[list[str]]:
         """Helper for resolving input parts in batch mode."""
@@ -79,10 +83,44 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
         return include
 
     @abstractmethod
+    def filter(
+        self,
+        criteria: CriteriaDict,
+        include: Sequence[PartNameT] | Literal["all"] | None = None,
+        max_len: int | None = None,
+        **options: Any,
+    ) -> dict[str, ART]:
+        """
+        Filter artifacts based on CriteriaDict against RootModel fields.
+
+        Args:
+            criteria: Dictionary of field names to expected values or (value, operator) tuples.
+            include: Parts to load.
+            max_len: Maximum number of artifacts to return.
+            options: Additional options for loading.
+
+        Returns:
+            Dictionary mapping artifact ID to fully populated artifact instances.
+        """
+        pass
+
+    @abstractmethod
+    def list_parts(
+        self,
+        criteria: CriteriaDict,
+        max_len: int | None = None,
+    ) -> dict[str, dict[str, bool]]:
+        """
+        Returns a dictionary mapping artifact IDs to a dictionary of their part presence.
+        Example: {"art-1": {"audio": True, "transcription": False}}
+        """
+        pass
+
+    @abstractmethod
     def save(
         self,
         artifact: ART,
-        include: Iterable[PartNameT] | Literal["all"] | None = "all",
+        include: Sequence[PartNameT] | Literal["all"] | None = "all",
     ) -> None:
         """
         Root + eager fields are always written.  Part behaviour is controlled
@@ -114,7 +152,7 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
     def load(
         self,
         artifact_id: str,
-        include: Iterable[PartNameT] | Literal["all"] | None = None,
+        include: Sequence[PartNameT] | Literal["all"] | None = None,
         **options: Any,
     ) -> ART | None:
         """
@@ -136,7 +174,7 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
     def load_raw(
         self,
         artifact_id: str,
-        include: Iterable[PartNameT] | Literal["all"] | None = None,
+        include: Sequence[PartNameT] | Literal["all"] | None = None,
         **options: Any,
     ) -> dict[str, Any] | None:
         pass
@@ -188,7 +226,7 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
     def delete_parts(
         self,
         artifact_id: str,
-        parts: Iterable[PartNameT] | Literal["all"],
+        parts: Sequence[PartNameT] | Literal["all"],
     ) -> None:
         """
         Remove stored parts without affecting the root or other parts.
@@ -212,3 +250,53 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
     @abstractmethod
     def exists(self, artifact_id: str) -> bool:
         """Return ``True`` if the root record is present in storage."""
+
+    def _validate_criteria(self, criteria: CriteriaDict) -> None:
+        """Validate that criteria keys are valid RootModel fields."""
+        root_type = self._artifact_type.model_fields["root"].annotation
+        for key in criteria:
+            if key not in root_type.model_fields:
+                raise ValueError(
+                    f"Filter field {key!r} is not a valid RootModel field "
+                    f"for {self._artifact_type.__name__}."
+                )
+
+    def _match_criteria(
+        self, root_data: dict[str, Any], criteria: CriteriaDict
+    ) -> bool:
+        """Evaluate if a root dictionary matches the given criteria."""
+        for field, crit_val in criteria.items():
+            if field not in root_data:
+                return False
+            actual_val = root_data[field]
+
+            if (
+                isinstance(crit_val, tuple)
+                and len(crit_val) == 2
+                and isinstance(crit_val[1], str)
+            ):
+                expected_val, op = crit_val
+            else:
+                expected_val, op = crit_val, "eq"
+
+            if op == "eq":
+                if not (actual_val == expected_val):
+                    return False
+            elif op == "ne":
+                if not (actual_val != expected_val):
+                    return False
+            elif op == "gt":
+                if not (actual_val > expected_val):
+                    return False
+            elif op == "lt":
+                if not (actual_val < expected_val):
+                    return False
+            elif op == "ge":
+                if not (actual_val >= expected_val):
+                    return False
+            elif op == "le":
+                if not (actual_val <= expected_val):
+                    return False
+            else:
+                raise ValueError(f"Unsupported operator: {op}")
+        return True

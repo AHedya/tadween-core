@@ -13,13 +13,15 @@ except ImportError:
 import contextlib
 import gzip
 import io
+import json
 import logging
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Any
 
 from ..exceptions import S3InitError
-from .base import ART, BaseArtifactRepo, PartNameT
+from .base import ART, BaseArtifactRepo, CriteriaDict, PartNameT
 
 MB = 1024 * 1024
 
@@ -240,6 +242,91 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
             if exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
                 return False
             raise
+
+    def _get_matching_ids(
+        self, criteria: CriteriaDict, max_len: int | None = None
+    ) -> list[str]:
+        self._validate_criteria(criteria)
+
+        # Gather all root.json keys
+        keys = []
+        paginator = self._client.get_paginator("list_objects_v2")
+        # Ensure trailing slash for prefix to list inside directory
+        prefix = f"{self._prefix}/" if self._prefix else ""
+        for page in paginator.paginate(Bucket=self._bucket_id, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if key.endswith("/root.json"):
+                    keys.append(key)
+
+        def fetch_root(k: str) -> tuple[str, dict[str, Any] | None]:
+            try:
+                raw = self._get(k)
+                if raw is None:
+                    return k, None
+                return k, json.loads(raw)
+            except Exception:
+                return k, None
+
+        futures = [self._pool.submit(fetch_root, k) for k in keys]
+
+        matching_ids = []
+        prefix_len = len(prefix)
+        for fut in futures:
+            key, root_dict = fut.result()
+            if root_dict is not None and self._match_criteria(
+                root_dict.get("root", {}), criteria
+            ):
+                # Extract artifact_id from key
+                rel_path = key[prefix_len:]
+                aid = rel_path.split("/")[0]
+                matching_ids.append(aid)
+                if max_len is not None and len(matching_ids) >= max_len:
+                    break
+        return matching_ids
+
+    def filter(
+        self,
+        criteria: CriteriaDict,
+        include=None,
+        max_len: int | None = None,
+        **options: Any,
+    ) -> dict[str, ART]:
+        matching_ids = self._get_matching_ids(criteria, max_len)
+
+        if isinstance(include, Sequence):
+            include = [include] * len(matching_ids)
+        results = self.load_many(matching_ids, include, **options)
+        return {k: v for k, v in results.items() if v is not None}
+
+    def list_parts(
+        self,
+        criteria: CriteriaDict,
+        max_len: int | None = None,
+    ) -> dict[str, dict[str, bool]]:
+        matching_ids = self._get_matching_ids(criteria, max_len)
+
+        def check_parts(aid: str) -> tuple[str, set[str]]:
+            prefix = f"{self._prefix}/{aid}/parts/"
+            paginator = self._client.get_paginator("list_objects_v2")
+            existing_keys = set()
+            for page in paginator.paginate(Bucket=self._bucket_id, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    existing_keys.add(obj["Key"])
+            return aid, existing_keys
+
+        futures = [self._pool.submit(check_parts, aid) for aid in matching_ids]
+
+        result = {}
+        for fut in futures:
+            aid, existing_keys = fut.result()
+            parts_info = {}
+            for part_name in self._part_map.keys():
+                part_key = self._get_part_key(aid, part_name)
+                parts_info[part_name] = part_key in existing_keys
+            result[aid] = parts_info
+
+        return result
 
     def _put(self, key: str, body: bytes, content_type: str = _CT_JSON) -> None:
         size = len(body)

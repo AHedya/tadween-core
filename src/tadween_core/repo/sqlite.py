@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from tadween_core.repo.base import ART, BaseArtifactRepo, PartNameT
+from tadween_core.repo.base import ART, BaseArtifactRepo, CriteriaDict, PartNameT
 from tadween_core.types.artifact.base import (
     RootModel,
 )
@@ -318,6 +318,107 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
                     f"DELETE FROM {table} WHERE artifact_id = ?",
                     (artifact_id,),
                 )
+
+    def _get_matching_ids(
+        self, criteria: CriteriaDict, max_len: int | None = None
+    ) -> list[str]:
+        self._validate_criteria(criteria)
+
+        clauses = []
+        params = []
+        op_map = {
+            "eq": "=",
+            "ne": "!=",
+            "gt": ">",
+            "lt": "<",
+            "ge": ">=",
+            "le": "<=",
+        }
+
+        if not criteria:
+            sql = f"SELECT id FROM {self._root_table}"
+        else:
+            for field, crit_val in criteria.items():
+                if (
+                    isinstance(crit_val, tuple)
+                    and len(crit_val) == 2
+                    and isinstance(crit_val[1], str)
+                ):
+                    expected_val, op_str = crit_val
+                else:
+                    expected_val, op_str = crit_val, "eq"
+
+                op = op_map.get(op_str)
+                if not op:
+                    raise ValueError(f"Unsupported operator: {op_str}")
+
+                clauses.append(f"{field} {op} ?")
+
+                if isinstance(expected_val, UUID):
+                    params.append(str(expected_val))
+                elif isinstance(expected_val, Enum):
+                    params.append(expected_val.value)
+                else:
+                    params.append(expected_val)
+
+            where_sql = " AND ".join(clauses)
+            sql = f"SELECT id FROM {self._root_table} WHERE {where_sql}"
+
+        if max_len is not None:
+            sql += " LIMIT ?"
+            params.append(max_len)
+
+        with sqlite3.connect(self.db_path) as con:
+            rows = con.execute(sql, params).fetchall()
+        return [row[0] for row in rows]
+
+    def filter(
+        self,
+        criteria: CriteriaDict,
+        include=None,
+        max_len: int | None = None,
+        **options: Any,
+    ) -> dict[str, ART]:
+        matching_ids = self._get_matching_ids(criteria, max_len)
+
+        if isinstance(include, Sequence):
+            include = [include] * len(matching_ids)
+        results = self.load_many(matching_ids, include, **options)
+        return {k: v for k, v in results.items() if v is not None}
+
+    def list_parts(
+        self,
+        criteria: CriteriaDict,
+        max_len: int | None = None,
+    ) -> dict[str, dict[str, bool]]:
+        matching_ids = self._get_matching_ids(criteria, max_len)
+        if not matching_ids:
+            return {}
+
+        select_parts = []
+        for part_name in self._part_map.keys():
+            table = self._get_part_table_name(part_name)
+            select_parts.append(
+                f"EXISTS(SELECT 1 FROM {table} WHERE artifact_id = id) as has_{part_name}"
+            )
+
+        placeholders = ",".join(["?"] * len(matching_ids))
+        parts_sql = ", ".join(select_parts)
+        sql = f"SELECT id, {parts_sql} FROM {self._root_table} WHERE id IN ({placeholders})"
+
+        with sqlite3.connect(self.db_path) as con:
+            con.row_factory = sqlite3.Row
+            rows = con.execute(sql, matching_ids).fetchall()
+
+        result = {}
+        for row in rows:
+            aid = row["id"]
+            parts_info = {}
+            for part_name in self._part_map.keys():
+                parts_info[part_name] = bool(row[f"has_{part_name}"])
+            result[aid] = parts_info
+
+        return result
 
     def _load(
         self,
