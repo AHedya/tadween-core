@@ -4,7 +4,8 @@ from .test_contract import RepoContract
 
 
 @pytest.mark.xfail(
-    reason="moto.s3.urls *sometimes* fails in free-threaded build", raises=ImportError
+    reason="moto.s3.urls *sometimes* fails in free-threaded build",
+    raises=(ImportError, KeyError),
 )
 class TestS3Repo(RepoContract):
     @pytest.fixture
