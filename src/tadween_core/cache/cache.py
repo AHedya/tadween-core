@@ -2,10 +2,10 @@ import logging
 import sys
 import threading
 import time
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 from tadween_core.cache.adapter import create_schema_adapter
-from tadween_core.cache.base import CacheEntry
+from tadween_core.cache.base import BaseCache, CacheEntry
 from tadween_core.cache.proxy import BucketProxy
 
 from .policy import CachePolicy
@@ -13,7 +13,7 @@ from .policy import CachePolicy
 BucketSchemaT = TypeVar("BucketSchemaT")
 
 
-class Cache(Generic[BucketSchemaT]):
+class Cache(BaseCache[BucketSchemaT]):
     """Type-safe, dynamic, two-layers caching system.
     Supports various eviction strategies: (Read Quota, LRU, LFU, FIFO).
     """
@@ -38,11 +38,15 @@ class Cache(Generic[BucketSchemaT]):
         self._bucket_sizes: dict[str, int] = {}
         self._bucket_last_accessed: dict[str, float] = {}
         self.logger = logger or logging.getLogger(f"tadween.cache.{id(self):x}")
-        self.lock = threading.RLock()
+        self._lock = threading.RLock()
 
     @property
     def schema_type(self) -> type[BucketSchemaT]:
         return self._schema_type
+
+    @property
+    def lock(self):
+        return self._lock
 
     def get_bucket(self, key: str) -> (
         BucketProxy[BucketSchemaT] | BucketSchemaT

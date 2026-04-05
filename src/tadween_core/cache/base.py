@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 import contextlib
 import sys
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, TypeVar
 
 V = TypeVar("V")
 # split factory generic from class generic
@@ -12,22 +11,47 @@ T = TypeVar("T")
 BucketSchemaT = TypeVar("BucketSchemaT")
 
 
-class BaseCache(Protocol[BucketSchemaT]):
+class BaseCache(ABC, Generic[BucketSchemaT]):
     @property
-    def lock(self) -> contextlib.AbstractContextManager[Any]: ...
+    @abstractmethod
+    def lock(self) -> contextlib.AbstractContextManager[Any]:
+        """Return a context manager for thread/process safety."""
+        ...
 
     @property
-    def schema_type(self) -> type[BucketSchemaT]: ...
+    @abstractmethod
+    def schema_type(self) -> type[BucketSchemaT]:
+        """Return the class/type of the schema being cached."""
+        ...
 
+    @abstractmethod
     def get_bucket(self, key: str) -> BucketSchemaT | None: ...
+
+    @abstractmethod
     def set_bucket(self, key: str, bucket: BucketSchemaT, **kwargs: Any) -> bool: ...
+
+    @abstractmethod
     def delete_bucket(self, key: str) -> None: ...
+
+    @abstractmethod
     def clear(self) -> None: ...
+
+    @abstractmethod
     def keys(self) -> list[str]: ...
+
+    @abstractmethod
     def __contains__(self, key: str) -> bool: ...
+
+    @abstractmethod
     def __getitem__(self, key: str) -> BucketSchemaT | None: ...
+
+    @abstractmethod
     def __setitem__(self, key: str, bucket: BucketSchemaT) -> None: ...
+
+    @abstractmethod
     def __delitem__(self, key: str) -> None: ...
+
+    @abstractmethod
     def __len__(self) -> int: ...
 
 
@@ -45,7 +69,7 @@ class CacheEntry(Generic[V]):
     remaining_reads: int | None = None
 
     @classmethod
-    def create(cls, value: T, remaining_reads: int | None = None) -> CacheEntry[T]:
+    def create(cls, value: T, remaining_reads: int | None = None) -> "CacheEntry[T]":
         now = get_rounded_time(5)
         return cls(
             value=value,
