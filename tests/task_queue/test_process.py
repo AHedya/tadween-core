@@ -44,6 +44,9 @@ class TestProcessTaskQueue(TaskQueueContract):
         pq = ProcessTaskQueue(name="CancelQueue", max_workers=1, retain_results=True)
         try:
             task_id1 = pq.submit(conditional_slow_task, event=event, duration=0.5)
+            # overwhelm
+            pq.submit(slow_task, duration=0.2)
+            pq.submit(slow_task, duration=0.2)
             task_id2 = pq.submit(slow_task, duration=5.0)
 
             result1 = pq.cancel(task_id1)
