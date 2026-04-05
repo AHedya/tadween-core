@@ -47,7 +47,9 @@ class WorkflowRoutingPolicy(
         self._payload_extractor = payload_extractor or (lambda x: {})
 
     def resolve_inputs(self, message, repo=None, cache=None):
-        return self._stage_policy.resolve_inputs(message, self._repo or repo, cache)
+        return self._stage_policy.resolve_inputs(
+            message=message, repo=self._repo or repo, cache=cache
+        )
 
     def intercept(
         self,
@@ -59,14 +61,14 @@ class WorkflowRoutingPolicy(
         active_broker = self._broker or broker
 
         context = self._stage_policy.intercept(
-            message, broker, self._repo or repo, cache
+            message=message, broker=broker, repo=self._repo or repo, cache=cache
         )
         if not context or not context.intercepted:
             return context
 
         self._stage_policy.on_done(
-            message,
-            TaskEnvelope(
+            message=message,
+            envelope=TaskEnvelope(
                 payload=None,
                 metadata=TaskMetadata(
                     task_id="N/A", start_time=0, end_time=0, submit_time=0
@@ -76,7 +78,12 @@ class WorkflowRoutingPolicy(
             ),
         )
         self._stage_policy.on_success(
-            "N/A", message, context.payload, active_broker, self._repo or repo, cache
+            task_id="N/A",
+            message=message,
+            result=context.payload,
+            broker=active_broker,
+            repo=self._repo or repo,
+            cache=cache,
         )
 
         if active_broker and self._output_topics:
@@ -133,7 +140,12 @@ class WorkflowRoutingPolicy(
 
         # Execute Inner Policy (save to DB/Repo/cache)
         self._stage_policy.on_success(
-            task_id, message, result, active_broker, repo, cache
+            task_id=task_id,
+            message=message,
+            result=result,
+            broker=active_broker,
+            repo=repo,
+            cache=cache,
         )
 
         # Routing (The "Glue" Logic)
@@ -182,14 +194,16 @@ class WorkflowRoutingPolicy(
     ):
         active_broker = self._broker or broker
         try:
-            self._stage_policy.on_error(message, error, active_broker)
+            self._stage_policy.on_error(
+                message=message, error=error, broker=active_broker
+            )
         finally:
             if active_broker:
                 # TODO: Determine requeue mechanism and control
                 active_broker.nack(message.id, requeue_message=None)
 
     def on_done(self, message, envelope):
-        self._stage_policy.on_done(message, envelope)
+        self._stage_policy.on_done(message=message, envelope=envelope)
 
     def on_running(self, task_id, message):
-        self._stage_policy.on_running(task_id, message)
+        self._stage_policy.on_running(task_id=task_id, message=message)
