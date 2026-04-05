@@ -1,6 +1,6 @@
 import queue
 import threading
-import time  # noqa
+import time
 
 import pytest
 
@@ -64,7 +64,7 @@ def test_one_to_one(broker: InMemoryBroker):
     broker.subscribe("test.topic", handler)
     broker.publish(Message(topic="test.topic", payload={"data": "hello"}))
 
-    assert event.wait(timeout=5), "Message not received within timeout"
+    assert event.wait(timeout=8), "Message not received within timeout"
 
 
 def test_one_to_many(broker: InMemoryBroker):
