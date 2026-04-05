@@ -18,7 +18,9 @@ class TestWorkflowRoutingPolicy:
 
         res = router.resolve_inputs(msg)
         assert res == {"res": 1}
-        inner_policy.resolve_inputs.assert_called_once_with(msg, None, None)
+        inner_policy.resolve_inputs.assert_called_once_with(
+            message=msg, repo=None, cache=None
+        )
 
     def test_intercept_false_delegates(self):
         inner_policy = MagicMock()
@@ -28,7 +30,9 @@ class TestWorkflowRoutingPolicy:
 
         ctx = router.intercept(msg)
         assert ctx.intercepted is False
-        inner_policy.intercept.assert_called_once()
+        inner_policy.intercept.assert_called_once_with(
+            message=msg, broker=None, repo=None, cache=None
+        )
 
     def test_intercept_true_routes_and_acks(self):
         inner_policy = MagicMock()
@@ -47,17 +51,21 @@ class TestWorkflowRoutingPolicy:
         ctx = router.intercept(msg)
         assert ctx.intercepted is True
 
-        # Verify inner policy is called with on_done and on_success
         inner_policy.on_done.assert_called_once()
-        inner_policy.on_success.assert_called_once()
+        inner_policy.on_success.assert_called_once_with(
+            task_id="N/A",
+            message=msg,
+            result={"cached": True},
+            broker=broker,
+            repo=None,
+            cache=None,
+        )
 
-        # Verify routing
         broker.publish.assert_called_once()
         pub_msg = broker.publish.call_args[0][0]
         assert pub_msg.topic == "out.topic"
         assert pub_msg.payload == {"cached": True}
 
-        # Verify ack
         broker.ack.assert_called_once_with(msg.id)
 
     def test_intercept_payload_extractor_failure(self):
@@ -112,7 +120,12 @@ class TestWorkflowRoutingPolicy:
         router.on_success("t1", msg, {"out": 42})
 
         inner_policy.on_success.assert_called_once_with(
-            "t1", msg, {"out": 42}, broker, None, None
+            task_id="t1",
+            message=msg,
+            result={"out": 42},
+            broker=broker,
+            repo=None,
+            cache=None,
         )
 
         broker.publish.assert_called_once()
@@ -134,7 +147,9 @@ class TestWorkflowRoutingPolicy:
 
         router.on_error(msg, err)
 
-        inner_policy.on_error.assert_called_once_with(msg, err, broker)
+        inner_policy.on_error.assert_called_once_with(
+            message=msg, error=err, broker=broker
+        )
         broker.nack.assert_called_once_with(msg.id, requeue_message=None)
 
     def test_on_done_delegates(self):
@@ -151,7 +166,7 @@ class TestWorkflowRoutingPolicy:
         )
 
         router.on_done(msg, env)
-        inner_policy.on_done.assert_called_once_with(msg, env)
+        inner_policy.on_done.assert_called_once_with(message=msg, envelope=env)
 
     def test_on_running_delegates(self):
         inner_policy = MagicMock()
@@ -159,4 +174,4 @@ class TestWorkflowRoutingPolicy:
         msg = Message(topic="in")
 
         router.on_running("t1", msg)
-        inner_policy.on_running.assert_called_once_with("t1", msg)
+        inner_policy.on_running.assert_called_once_with(task_id="t1", message=msg)
