@@ -62,6 +62,31 @@ If you use single stage and try to hit the cache, you would typically need to di
 
 Note: Default workflow router implementation fires `on_done` automatically. ***Never ack, nack, invoke `on_done` in workflow managed stage policies*** unless you know what you do.
 
+---
+
+## Stage Policy Decorators
+
+Policy decorators help reduce boilerplate for common patterns like caching, timing, and dependency injection.
+
+### Data Injection
+- `@inject_cache(cache_field, inject_as, cache_key="cache_key")`: Injects a value from the cache bucket into `resolve_inputs` keyword arguments.
+- `@inject_repo(part, inject_as, aid="artifact_id")`: Injects an artifact part from the repository into `resolve_inputs` keyword arguments.
+
+These can be stacked for fallback logic (e.g., check cache first, then repo):
+```python
+@inject_cache(cache_field="audio_array", inject_as="audio")
+@inject_repo(part="audio", inject_as="audio")
+def resolve_inputs(self, message, audio=None, **kwargs):
+    # `audio` will be populated from cache if found, otherwise from repo.
+    return MyInput(audio=audio)
+```
+
+### Lifecycle & Utilities
+- `@write_cache(cache_field, result_field)`: Automatically writes handler results to cache on success.
+- `@check_repo(aid, condition)`: Intercepts execution if certain artifact parts already exist in the repo.
+- `@done_timing()`: Logs execution duration and waiting time.
+- `@log_errors()`: Automatically logs errors encountered during the stage lifecycle.
+
 ## Anatomy
 ```
 └── stage

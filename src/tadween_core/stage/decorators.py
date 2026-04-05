@@ -351,3 +351,131 @@ def check_repo(
         return wrapper
 
     return decorator
+
+
+def inject_cache(
+    cache_field: str,
+    inject_as: str,
+    cache_key: str = "cache_key",
+) -> Callable[[Callable[P, Any]], Callable[P, Any]]:
+    """
+    Decorator for `resolve_inputs` that injects a value from cache into kwargs.
+
+    If `inject_as` is already in kwargs, it skips the cache lookup (allows stacking).
+    Retrieves the cache key from message.metadata[cache_key].
+
+    Args:
+        cache_field: The attribute name to read from the cache bucket.
+        inject_as: The keyword argument name to inject into the wrapped method.
+        cache_key: Metadata key for cache lookup. Defaults to "cache_key".
+
+    Example:
+        ```python
+        @inject_cache(cache_field="audio_array", inject_as="audio")
+        def resolve_inputs(self, message, audio=None, **kwargs):
+            return MyInput(audio=audio)
+        ```
+    """
+
+    def decorator(method: Callable[P, Any]) -> Callable[P, Any]:
+        @functools.wraps(method)
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            # Check if already injected by an outer decorator
+            if inject_as in kwargs:
+                return method(self, *args, **kwargs)
+
+            if msg := kwargs.get("message"):
+                message = msg
+            elif args and isinstance(args[0], Message):
+                message = args[0]
+            else:
+                return method(self, *args, **kwargs)
+
+            cache = kwargs.get("cache")
+            # args fallback
+            if cache is None and len(args) > 2 and isinstance(args[2], BaseCache):
+                cache = args[2]
+
+            bucket_key = (
+                message.metadata.get(cache_key)
+                if message.metadata and cache_key
+                else None
+            )
+
+            if bucket_key is not None and cache is not None:
+                bucket = cache.get_bucket(bucket_key)
+                if bucket is not None and hasattr(bucket, cache_field):
+                    val = getattr(bucket, cache_field)
+                    if val is not None:
+                        kwargs[inject_as] = val
+
+            return method(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def inject_repo(
+    part: str,
+    inject_as: str,
+    aid: str = "artifact_id",
+) -> Callable[[Callable[P, Any]], Callable[P, Any]]:
+    """
+    Decorator for `resolve_inputs` that injects a part from repo into kwargs.
+
+    If `inject_as` is already in kwargs, it skips the repo lookup (allows stacking).
+    Retrieves the artifact ID from message.metadata[aid].
+
+    Args:
+        part: The part name to load from the repository.
+        inject_as: The keyword argument name to inject into the wrapped method.
+        aid: Metadata key for the artifact ID. Defaults to "artifact_id".
+
+    Example:
+        ```python
+        # Stacked: Cache first, then Repo fallback
+        @inject_cache(cache_field="audio_array", inject_as="audio")
+        @inject_repo(part="audio", inject_as="audio")
+        def resolve_inputs(self, message, audio=None, **kwargs):
+            return MyInput(audio=audio)
+        ```
+    """
+
+    def decorator(method: Callable[P, Any]) -> Callable[P, Any]:
+        @functools.wraps(method)
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            # Check if already injected by an outer decorator (e.g. inject_cache)
+            if inject_as in kwargs:
+                return method(self, *args, **kwargs)
+
+            # Try to find message in args or kwargs
+            if msg := kwargs.get("message"):
+                message = msg
+            elif args and isinstance(args[0], Message):
+                message = args[0]
+            else:
+                return method(self, *args, **kwargs)
+
+            repo = kwargs.get("repo")
+            # args fallback
+            if repo is None and len(args) > 1 and isinstance(args[2], BaseArtifactRepo):
+                repo = args[2]
+
+            artifact_id = (
+                message.metadata.get(aid) if message.metadata and aid else None
+            )
+
+            if artifact_id is not None and repo is not None:
+                try:
+                    val = repo.load_part(artifact_id, part)
+                    if val is not None:
+                        kwargs[inject_as] = val
+                except (KeyError, ValueError):
+                    pass
+
+            return method(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
