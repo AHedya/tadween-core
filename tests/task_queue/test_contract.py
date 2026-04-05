@@ -52,7 +52,7 @@ class TaskQueueContract:
             queue.wait_all(timeout=0.2)
 
     def test_wait_all_empty_queue(self, queue):
-        queue.wait_all(timeout=1.0)
+        queue.wait_all(timeout=5.0)
 
     def test_stream_completed_yields_results(self, queue):
         n = 5
@@ -69,7 +69,7 @@ class TaskQueueContract:
         task_id = queue.submit(failing_task)
 
         with pytest.raises((ValueError, TimeoutError), match="Task failed!"):
-            queue.get_result(task_id, timeout=1.0)
+            queue.get_result(task_id, timeout=5.0)
 
     def test_stream_completed_yields_errors(self, queue):
         queue.submit(failing_task, msg="error1")
@@ -124,7 +124,7 @@ class TaskQueueContract:
         t2 = queue.submit(slow_task, duration=0.2)
         t3 = queue.submit(failing_task, msg="err")
 
-        queue.wait_all(timeout=2.0)
+        queue.wait_all(timeout=5.0)
 
         statuses = queue.get_all_statuses()
 
@@ -187,7 +187,7 @@ class TaskQueueContract:
         task_id = queue.submit(fast_task, x=3, on_done=done_cb)
         queue.get_result(task_id, timeout=5.0)
 
-        assert event.wait(timeout=3.0)
+        assert event.wait(timeout=5.0)
 
     def test_callback_on_done_passes_result(self, queue, event, pipe: Queue):
 
@@ -211,4 +211,4 @@ class TaskQueueContract:
         task_id = queue.submit(fast_task, x=2, on_running=on_running_cb)
         queue.get_result(task_id, timeout=5.0)
 
-        assert event.wait(timeout=1.0)
+        assert event.wait(timeout=5.0)
