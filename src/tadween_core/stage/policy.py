@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Generic, TypeAlias
 
 from pydantic import BaseModel
@@ -21,11 +21,35 @@ OutputT = TypeVar("OutputT", default=Any, bound=BaseModel)
 T = TypeVar("T", default=Any, bound=BaseModel)
 
 
+@dataclass(slots=True)
+class InterceptionAction:
+    """
+    Directives for the Orchestrator/Router on how to handle an intercepted message.
+    """
+
+    on_done: bool = True
+    on_success: bool = True
+    publish: bool = True
+    ack: bool = True
+
+    @classmethod
+    def short_circuit(cls):
+        """Preset: Skip execution but continue the workflow (e.g. Cache Hit)."""
+        return cls(on_done=True, on_success=True, publish=True, ack=True)
+
+    @classmethod
+    def cancel(cls):
+        """Preset: Stop the workflow entirely for this task."""
+        return cls(on_done=False, on_success=False, publish=False, ack=True)
+
+
+# responsibility
 @dataclass
 class InterceptionContext(Generic[OutputT]):
     intercepted: bool
     payload: OutputT | None = None
     reason: str | None = None
+    action: InterceptionAction = field(default_factory=InterceptionAction)
 
 
 class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):

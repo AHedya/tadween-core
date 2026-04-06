@@ -183,7 +183,13 @@ def test_full_e2e_workflow(
     )
 
     # Build Workflow
-    wf = Workflow(broker=inmemory_broker, repo=e2e_repo, cache=e2e_cache)
+    wf = Workflow(
+        broker=inmemory_broker,
+        repo=e2e_repo,
+        cache=e2e_cache,
+        # None for propagating message payload to streamline stages messages.
+        default_payload_extractor=lambda x: None,
+    )
     wf.add_stage(
         "ingestion",
         IngestionHandler(),
@@ -218,6 +224,7 @@ def test_full_e2e_workflow(
     events.clear()
     wf.submit(IngestionInput(user_id="user1", text="hello"))
     wait_for_settle()
+    print("++", events)
 
     assert "Ingestion done: art-user1" in events
     assert "Processing done: art-user1" in events

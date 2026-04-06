@@ -1,6 +1,5 @@
 import logging
 from collections.abc import Callable
-from typing import Any
 
 from tadween_core.broker import BaseMessageBroker
 from tadween_core.exceptions import PolicyError, RoutingError
@@ -33,7 +32,8 @@ class WorkflowRoutingPolicy(
         stage_name: str | None = None,
         broker: BaseMessageBroker | None = None,
         repo: BaseArtifactRepo[ArtifactT, PartNameT] | None = None,
-        payload_extractor: Callable[[OutputT], Any] | None = None,
+        # `OutputT` | `None` as intercept might not provide context payload if canceled
+        payload_extractor: Callable[[OutputT | None], dict] | None = None,
         logger: logging.Logger | None = None,
     ):
         self._stage_policy = stage_policy
@@ -44,6 +44,10 @@ class WorkflowRoutingPolicy(
         self.logger = logger or logging.getLogger("tadween.workflow.router")
 
         # Default: no payload passing
+        # If returns:
+        # None  -> propagate message payload
+        # `x`   -> context payload
+        # {}    -> No payload passing
         self._payload_extractor = payload_extractor or (lambda x: {})
 
     def resolve_inputs(self, message, repo=None, cache=None):
@@ -66,27 +70,29 @@ class WorkflowRoutingPolicy(
         if not context or not context.intercepted:
             return context
 
-        self._stage_policy.on_done(
-            message=message,
-            envelope=TaskEnvelope(
-                payload=None,
-                metadata=TaskMetadata(
-                    task_id="N/A", start_time=0, end_time=0, submit_time=0
+        if context.action.on_done:
+            self._stage_policy.on_done(
+                message=message,
+                envelope=TaskEnvelope(
+                    payload=None,
+                    metadata=TaskMetadata(
+                        task_id="N/A", start_time=0, end_time=0, submit_time=0
+                    ),
+                    error=None,
+                    success=True,
                 ),
-                error=None,
-                success=True,
-            ),
-        )
-        self._stage_policy.on_success(
-            task_id="N/A",
-            message=message,
-            result=context.payload,
-            broker=active_broker,
-            repo=self._repo or repo,
-            cache=cache,
-        )
+            )
+        if context.action.on_success:
+            self._stage_policy.on_success(
+                task_id="N/A",
+                message=message,
+                result=context.payload,
+                broker=active_broker,
+                repo=self._repo or repo,
+                cache=cache,
+            )
 
-        if active_broker and self._output_topics:
+        if active_broker and self._output_topics and context.action.publish:
             try:
                 payload = self._payload_extractor(context.payload)
             except Exception as e:
@@ -123,7 +129,7 @@ class WorkflowRoutingPolicy(
                     )
                     self.logger.error(f"{err}")
                     raise err from e
-        if active_broker:
+        if active_broker and context.action.ack:
             active_broker.ack(message.id)
         return context
 
