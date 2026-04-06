@@ -23,7 +23,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
-
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
@@ -35,3 +34,19 @@ jobs:
       - name: Run tests
         timeout-minutes: 5
         run: nox -s "tests-${{ matrix.python-version }}"
+
+  free-threaded-tests:
+    timeout-minutes: 10
+    name: Tests / Python 3.14t (free-threaded)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: "3.14t"
+      - run: uv tool install nox
+      - name: Run free-threaded tests
+        timeout-minutes: 5
+        run: nox -s free_threaded_tests
