@@ -15,7 +15,7 @@ def tests(session):
         f"--python={session.virtualenv.location}",
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
-    session.run("pytest", *session.posargs)
+    session.run("pytest", *session.posargs, env={"PYTHON_GIL": "1"})
 
 
 @nox.session(python="3.11", tags=["style"])
