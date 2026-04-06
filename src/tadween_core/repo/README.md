@@ -38,7 +38,9 @@ Artifacts can be large (e.g., audio transcriptions, speaker diarization). To mit
 ---
 
 *FsJsonRepo* is text-based and prioritize human-readability. This is a huge trade-off as you rarely find a human-readable heavy artifact part, and json format doesn't support bytes; it needs to be encoded to base64 which is relatively larger. 
+---
 
+Directory organized artifacts such as _S3_, _Filesystem_, and _JSON Filesystem_ are sensitive to path-like ids. For instance, if artifact id is `compressed/audio1`, this would corrupt the structure. Consider substituting slashes (`/`) with underscores (`_`) or hyphens (`-`).
 
 ### Storage Convention
 

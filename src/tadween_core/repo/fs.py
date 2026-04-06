@@ -127,6 +127,18 @@ class FsRepo(BaseArtifactRepo[ART, PartNameT]):
     def exists(self, artifact_id: str) -> bool:
         return (self._get_dir(artifact_id) / "root.json").exists()
 
+    def has_parts(self, artifact_id, include="all"):
+        if not self.exists(artifact_id):
+            return None
+
+        part_names = self._resolve_part_names(include)
+        if not part_names:
+            return {}
+
+        return {
+            part: self._get_part_path(artifact_id, part).exists() for part in part_names
+        }
+
     def filter(
         self,
         criteria: CriteriaDict,

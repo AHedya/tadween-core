@@ -234,6 +234,25 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
             ).fetchone()
         return row is not None
 
+    def has_parts(self, artifact_id, include="all"):
+        if not self.exists(artifact_id):
+            return None
+
+        part_names = self._resolve_part_names(include)
+        if not part_names:
+            return {}
+
+        result = {}
+        with sqlite3.connect(self.db_path) as con:
+            for part in part_names:
+                table = self._get_part_table_name(part)
+                row = con.execute(
+                    f"SELECT 1 FROM {table} WHERE artifact_id = ? LIMIT 1",
+                    (artifact_id,),
+                ).fetchone()
+                result[part] = row is not None
+        return result
+
     def load_part(
         self,
         artifact_id,
