@@ -1,4 +1,5 @@
 import threading
+from collections.abc import Callable
 from logging import Logger, getLogger
 from pathlib import Path
 from typing import Any, Literal
@@ -33,6 +34,7 @@ class Workflow:
         repo: BaseArtifactRepo | None = None,
         life_length: float | None = None,
         logger: Logger | None = None,
+        default_payload_extractor: Callable[[Any | None], dict] | None = None,
     ):
         """
         Args:
@@ -49,6 +51,7 @@ class Workflow:
         self.repo = repo
         self.life_length = life_length
         self.logger = logger or getLogger(f"tadween.workflow.{self.name}")
+        self.payload_extractor = default_payload_extractor
 
         self._stages: dict[str, Stage] = {}
         # Adjacency list: source_stage -> [target_stages]
@@ -121,6 +124,7 @@ class Workflow:
             output_topics=[],
             stage_name=name,
             repo=self.repo,
+            payload_extractor=self.payload_extractor,
         )
 
         stage.policy = routing_policy

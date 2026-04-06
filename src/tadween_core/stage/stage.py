@@ -89,6 +89,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             self.policy.on_error(message, err, self.broker)
             raise err from e
         if context and context.intercepted:
+            self.logger.info(f"Intercepted. Reason: {context.reason}")
             return
 
         # Step 2: resolve inputs

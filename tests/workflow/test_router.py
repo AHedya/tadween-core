@@ -68,6 +68,54 @@ class TestWorkflowRoutingPolicy:
 
         broker.ack.assert_called_once_with(msg.id)
 
+    def test_intercept_cancel_preset(self):
+        inner_policy = MagicMock()
+        from tadween_core.stage.policy import InterceptionAction
+
+        inner_policy.intercept.return_value = InterceptionContext(
+            intercepted=True, action=InterceptionAction.cancel()
+        )
+        broker = MagicMock()
+        router = WorkflowRoutingPolicy(
+            stage_policy=inner_policy,
+            output_topics=["out.topic"],
+            broker=broker,
+        )
+        msg = Message(topic="in")
+
+        router.intercept(msg)
+
+        inner_policy.on_done.assert_not_called()
+        inner_policy.on_success.assert_not_called()
+        broker.publish.assert_not_called()
+        broker.ack.assert_called_once_with(msg.id)
+
+    def test_intercept_custom_action(self):
+        inner_policy = MagicMock()
+        from tadween_core.stage.policy import InterceptionAction
+
+        # Custom: only ack and on_done, no on_success, no publish
+        inner_policy.intercept.return_value = InterceptionContext(
+            intercepted=True,
+            action=InterceptionAction(
+                on_done=True, on_success=False, publish=False, ack=True
+            ),
+        )
+        broker = MagicMock()
+        router = WorkflowRoutingPolicy(
+            stage_policy=inner_policy,
+            output_topics=["out.topic"],
+            broker=broker,
+        )
+        msg = Message(topic="in")
+
+        router.intercept(msg)
+
+        inner_policy.on_done.assert_called_once()
+        inner_policy.on_success.assert_not_called()
+        broker.publish.assert_not_called()
+        broker.ack.assert_called_once_with(msg.id)
+
     def test_intercept_payload_extractor_failure(self):
         inner_policy = MagicMock()
         inner_policy.intercept.return_value = InterceptionContext(

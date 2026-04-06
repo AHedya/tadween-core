@@ -60,8 +60,14 @@ on_received
 - `intercept` runs synchronously on the main thread at submission time. while `on_success` runs asynchronously after the worker completes. When you submit all tasks in rapid succession, every `intercept` call hits an empty cache because no task has had time to finish and write to it.<br>
 If you use single stage and try to hit the cache, you would typically need to distribute submissions on intervals.
 
-Note: Default workflow router implementation fires `on_done` automatically. ***Never ack, nack, invoke `on_done` in workflow managed stage policies*** unless you know what you do.
+>Note: Default workflow router implementation fires `on_done` automatically. ***Never ack, nack, invoke `on_done` in workflow managed stage policies*** unless you know what you do.
 
+- When using `InterceptionAction` to gain full control over the workflow (e.g., via `InterceptionAction.cancel()` or custom flags), you take on the "mental burden" of ensuring your policy hooks are consistent.
+
+**Know what you want:**
+- If you **short-circuit** (`publish=True`) but don't provide a `payload` in the context, subsequent stages might receive empty inputs and fail.
+- If you enable `on_success=True` during interception, ensure your `on_success` hook can handle the `payload` you provided (e.g., if it expects a specific result format to write to a cache).
+- Always ensure `ack=True` is set unless you have a very specific reason to keep the message "in flight" or plan to handle the acknowledgement manually.
 ---
 
 ## Stage Policy Decorators

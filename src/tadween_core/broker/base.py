@@ -31,9 +31,9 @@ class Message:
         Create a deep copy of the message with a new UUID.
         """
         return Message(
-            topic=topic or self.topic,
-            payload=payload or copy.deepcopy(self.payload),
-            metadata=metadata or copy.deepcopy(self.metadata),
+            topic=topic if topic is not None else self.topic,
+            payload=payload if payload is not None else copy.deepcopy(self.payload),
+            metadata=metadata if metadata is not None else copy.deepcopy(self.metadata),
             id=str(uuid.uuid4()),
         )
 
