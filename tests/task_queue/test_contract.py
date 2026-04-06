@@ -47,6 +47,8 @@ class TaskQueueContract:
     def test_wait_all_timeout_raises(self, queue):
         queue.submit(slow_task, duration=0.5)
         queue.submit(slow_task, duration=0.5)
+        queue.submit(slow_task, duration=0.5)
+        queue.submit(slow_task, duration=0.5)
 
         with pytest.raises(TimeoutError):
             queue.wait_all(timeout=0.2)
