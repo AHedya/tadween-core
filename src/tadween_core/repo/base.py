@@ -117,6 +117,26 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
         pass
 
     @abstractmethod
+    def has_parts(
+        self,
+        artifact_id: str,
+        include: Sequence[PartNameT] | Literal["all"] | None = "all",
+    ) -> dict[PartNameT, bool] | None:
+        """
+        Check for the presence of specific parts for a given artifact.
+
+        Args:
+            artifact_id: The ID of the artifact to check.
+            include: The parts to check for. If None, returns an empty dict.
+                    If "all", checks for all parts defined on the artifact type.
+
+        Returns:
+            A dictionary mapping the requested part names to a boolean indicating their presence.
+            Returns None if the artifact itself does not exist.
+        """
+        pass
+
+    @abstractmethod
     def save(
         self,
         artifact: ART,

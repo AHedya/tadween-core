@@ -243,6 +243,27 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
                 return False
             raise
 
+    def has_parts(self, artifact_id, include="all"):
+        if not self.exists(artifact_id):
+            return None
+
+        part_names = self._resolve_part_names(include)
+        if not part_names:
+            return {}
+
+        result = {}
+        for part in part_names:
+            key = self._get_part_key(artifact_id, part)
+            try:
+                self._client.head_object(Bucket=self._bucket_id, Key=key)
+                result[part] = True
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                    result[part] = False
+                else:
+                    raise
+        return result
+
     def _get_matching_ids(
         self, criteria: CriteriaDict, max_len: int | None = None
     ) -> list[str]:

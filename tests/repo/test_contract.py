@@ -291,3 +291,37 @@ class RepoContract:
         # Test max_len parameter
         parts_info_limit = repo.list_parts({"stage": "init"}, max_len=1)
         assert len(parts_info_limit) == 1
+
+    def test_has_parts(self, repo: BaseRepo, artifact_metadata: ArtifactTestMetadata):
+        art1 = ArtifactTest(
+            root=ArtifactRoot(id="has-parts-1", stage="init", created_at=10.0),
+            metadata=artifact_metadata,
+        )
+        art1.part_a = ArtifactTestPart(content="part_a_data")
+        # part_b and audio are left as None
+
+        repo.save(art1, include="all")
+
+        # Test  Check "all" parts
+        res_all = repo.has_parts("has-parts-1", include="all")
+        assert "part_a" in res_all
+        assert "part_b" in res_all
+        assert "audio" in res_all
+        assert res_all["part_a"] is True
+        assert res_all["part_b"] is False
+        assert res_all["audio"] is False
+
+        # Check specific parts
+        res_specific = repo.has_parts("has-parts-1", include=["part_a", "part_b"])
+        assert "part_a" in res_specific
+        assert "part_b" in res_specific
+        assert "audio" not in res_specific
+        assert res_specific["part_a"] is True
+        assert res_specific["part_b"] is False
+
+        # Check None
+        res_none = repo.has_parts("has-parts-1", include=None)
+        assert res_none == {}
+
+        # Missing Artifact returns None
+        assert repo.has_parts("non-existent-id") is None
