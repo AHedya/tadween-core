@@ -1,6 +1,6 @@
 from collections.abc import Generator, Iterable
 
-import polars as pl
+import pandas as pd
 
 from .loaders import (  # noqa
     load_memory_sessions,
@@ -26,79 +26,65 @@ class MemorySessionProcessor:
         resample_interval: float = 0.05,
     ) -> MemoryMetric:
         if not session.samples:
-            return MemoryMetric(session.meta, pl.DataFrame(), id)
+            return MemoryMetric(session.meta, pd.DataFrame(), id)
 
-        df_main = pl.DataFrame(
-            [s for s in session.samples if s.role == MemoryRole.MAIN], orient="row"
+        df_main = pd.DataFrame(
+            [s.to_dict() for s in session.samples if s.role == MemoryRole.MAIN]
         )
-        df_child = pl.DataFrame(
-            [s for s in session.samples if s.role == MemoryRole.CHILD], orient="row"
+        df_child = pd.DataFrame(
+            [s.to_dict() for s in session.samples if s.role == MemoryRole.CHILD]
         )
 
-        t_max = df_main["time_lapsed"].max() if not df_main.is_empty() else 0
-        if not df_child.is_empty():
+        t_max = df_main["time_lapsed"].max() if not df_main.empty else 0
+        if not df_child.empty:
             t_max = max(t_max, df_child["time_lapsed"].max())
 
         n_steps = int(t_max / resample_interval) + 1
-        grid = (
-            pl.int_range(0, n_steps, eager=True).alias("time_lapsed").cast(pl.Float64)
-            * resample_interval
+        grid = pd.Series(
+            pd.RangeIndex(0, n_steps) * resample_interval,
+            dtype=float,
+            name="time_lapsed",
         )
 
         def resample_df(df, val_cols):
-            if df.is_empty():
-                return grid.to_frame().with_columns(
-                    [pl.lit(0.0).alias(c) for c in val_cols]
-                )
+            if df.empty:
+                return grid.to_frame().assign(**dict.fromkeys(val_cols, 0.0))
 
-            # Combine grid and data points to ensure we have all points for interpolation
-            df_unique = df.unique(subset="time_lapsed").select(
+            df_unique = df.drop_duplicates(subset="time_lapsed")[
                 ["time_lapsed"] + val_cols
-            )
+            ]
 
-            # Use same dtypes as original data for null placeholders
-            schema = df_unique.schema
-            combined = pl.concat(
+            combined = pd.concat(
                 [
-                    grid.to_frame().with_columns(
-                        [pl.lit(None, dtype=schema[c]).alias(c) for c in val_cols]
-                    ),
+                    grid.to_frame().assign(**dict.fromkeys(val_cols)),
                     df_unique,
-                ]
-            ).sort("time_lapsed")
+                ],
+                ignore_index=True,
+            ).sort_values("time_lapsed")
 
-            # Interpolate
             res = combined.interpolate()
 
-            # Fill edges
             for c in val_cols:
-                res = res.with_columns(
-                    pl.col(c)
-                    .fill_null(strategy="backward")
-                    .fill_null(strategy="forward")
-                )
+                res[c] = res[c].fillna(method="bfill").fillna(method="ffill")
 
-            # Filter to keep only the grid points.
-            # We use a left join with the grid to ensure we only have the requested intervals
-            # and avoid floating point comparison issues with filter.
-            return grid.to_frame().join(res, on="time_lapsed", how="left")
+            return grid.to_frame().merge(res, on="time_lapsed", how="left")
 
-        df_main_res = resample_df(df_main, ["usage_mb"]).rename({"usage_mb": "main_mb"})
+        df_main_res = resample_df(df_main, ["usage_mb"]).rename(
+            columns={"usage_mb": "main_mb"}
+        )
 
-        if not df_child.is_empty():
+        if not df_child.empty:
             df_child_res = resample_df(df_child, ["usage_mb", "count"]).rename(
-                {"usage_mb": "children_mb", "count": "children_count"}
+                columns={"usage_mb": "children_mb", "count": "children_count"}
             )
         else:
-            df_child_res = grid.to_frame().with_columns(
-                [pl.lit(0.0).alias("children_mb"), pl.lit(0).alias("children_count")]
-            )
+            df_child_res = grid.to_frame().assign(children_mb=0.0, children_count=0)
 
-        final_df = df_main_res.join(df_child_res, on="time_lapsed")
-        final_df = final_df.with_columns(
-            (pl.col("main_mb") + pl.col("children_mb")).alias("total_mb")
+        final_df = df_main_res.merge(df_child_res, on="time_lapsed")
+        final_df = final_df.assign(
+            total_mb=final_df["main_mb"] + final_df["children_mb"]
         )
-        final_df = final_df.with_columns(pl.col("children_count").round(0))
+        final_df["children_count"] = final_df["children_count"].round(0)
 
         return MemoryMetric(session.meta, final_df, id)
 
@@ -125,16 +111,13 @@ class RAMSessionProcessor:
         session: RAMSession,
         id: str | int | None = None,
     ) -> RAMMetric:
-        df = pl.DataFrame(session.samples, orient="row")
+        df = pd.DataFrame([s.to_dict() for s in session.samples])
         return RAMMetric(session.meta, df, id)
 
     @staticmethod
     def process_batch(
         batch: Iterable[RAMSession], ids: Iterable[int] | None = None
     ) -> Generator[RAMMetric, None, None]:
-        # need to document the len(batch) should be the same as len(ids)
-        # Either the shortest is considered.
-
         if ids is None:
             for id, m in enumerate(batch):
                 yield RAMSessionProcessor.process_session(session=m, id=id)
@@ -154,30 +137,13 @@ class RuntimeSessionProcessor:
         session: RuntimeSession,
         id: str | int | None = None,
     ) -> RuntimeMetric:
-        df = pl.DataFrame(session.samples, orient="row")
-        # add total `stage_total` column
-        # add `offset` column to differentiate
-        df = df.with_columns(
-            [
-                (pl.col("waiting") + pl.col("duration")).alias("stage_total"),
-                (pl.col("duration") / (pl.col("waiting") + pl.col("duration")) * 100)
-                .round(0)
-                .alias("efficiency"),
-            ]
-        ).with_columns(
-            [
-                pl.col("stage_total")
-                .shift(1)
-                .over("task_id")
-                .fill_null(0)
-                .cum_sum()
-                .over("task_id")
-                .alias("offset"),
-                pl.col("stage_total")
-                .sum()
-                .over("task_id")
-                .alias("task_total_duration"),
-            ]
+        df = pd.DataFrame([s.to_dict() for s in session.samples])
+        df["stage_total"] = df["waiting"] + df["duration"]
+        df["efficiency"] = ((df["duration"] / df["stage_total"]) * 100).round(0)
+        df["offset"] = df.groupby("task_id")["stage_total"].shift(1).fillna(0)
+        df["offset"] = df.groupby("task_id")["offset"].cumsum()
+        df["task_total_duration"] = df.groupby("task_id")["stage_total"].transform(
+            "sum"
         )
 
         return RuntimeMetric(session.meta, df, id)
