@@ -11,8 +11,17 @@ tadween-core is a modular, embedded micro-orchestrator for building complex, sta
 ### Setup
 
 ```bash
-# Install dependencies (requires uv package manager)
+# Install core dependencies only
 uv sync
+
+# Install with test dependencies
+uv sync --group test
+
+# Install with dev dependencies (analytics, notebooks)
+uv sync --group dev
+
+# Install with all dependency groups
+uv sync --all-groups
 ```
 
 ### Running Tests

@@ -12,6 +12,8 @@ def tests(session):
     session.run_install(
         "uv",
         "sync",
+        "--group",
+        "test",
         f"--python={session.virtualenv.location}",
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
@@ -30,6 +32,8 @@ def free_threaded_tests(session):
     session.run_install(
         "uv",
         "sync",
+        "--group",
+        "test",
         f"--python={session.virtualenv.location}",
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
