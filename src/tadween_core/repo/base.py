@@ -105,6 +105,16 @@ class BaseArtifactRepo(ABC, Generic[ART, PartNameT]):
         pass
 
     @abstractmethod
+    def list_ids(self) -> list[str]:
+        """
+        List all artifact IDs existing in the repository.
+
+        Returns:
+            A list of artifact ID strings.
+        """
+        pass
+
+    @abstractmethod
     def list_parts(
         self,
         criteria: CriteriaDict,

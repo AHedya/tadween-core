@@ -257,6 +257,28 @@ class RepoContract:
         with pytest.raises(ValueError, match="is not a valid RootModel field"):
             repo.filter({"unknown_field": "val"})
 
+    def test_list_ids(self, repo: BaseRepo, artifact_metadata: ArtifactTestMetadata):
+        art1 = ArtifactTest(
+            root=ArtifactRoot(id="list-1", stage="init", created_at=10.0),
+            metadata=artifact_metadata,
+        )
+        art2 = ArtifactTest(
+            root=ArtifactRoot(id="list-2", stage="init", created_at=20.0),
+            metadata=artifact_metadata,
+        )
+
+        initial_list = repo.list_ids()
+
+        repo.save_many([art1, art2])
+
+        current_list = repo.list_ids()
+        assert "list-1" in current_list
+        assert "list-2" in current_list
+        assert len(current_list) == len(initial_list) + 2
+
+        repo.delete_artifact("list-1")
+        assert "list-1" not in repo.list_ids()
+
     def test_list_parts(self, repo: BaseRepo, artifact_metadata: ArtifactTestMetadata):
         art1 = ArtifactTest(
             root=ArtifactRoot(id="list-parts-1", stage="init", created_at=10.0),

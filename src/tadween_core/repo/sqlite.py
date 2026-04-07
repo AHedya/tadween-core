@@ -405,6 +405,11 @@ class SqliteRepo(BaseArtifactRepo[ART, PartNameT]):
         results = self.load_many(matching_ids, include, **options)
         return {k: v for k, v in results.items() if v is not None}
 
+    def list_ids(self) -> list[str]:
+        with sqlite3.connect(self.db_path) as con:
+            rows = con.execute(f"SELECT id FROM {self._root_table}").fetchall()
+        return [row[0] for row in rows]
+
     def list_parts(
         self,
         criteria: CriteriaDict,

@@ -152,6 +152,9 @@ class FsRepo(BaseArtifactRepo[ART, PartNameT]):
         results = self.load_many(matching_ids, include, **options)
         return {k: v for k, v in results.items() if v is not None}
 
+    def list_ids(self) -> list[str]:
+        return [p.parent.name for p in self.base_path.glob("*/root.json")]
+
     def list_parts(
         self,
         criteria: CriteriaDict,

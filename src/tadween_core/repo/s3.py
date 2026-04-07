@@ -320,6 +320,20 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
         results = self.load_many(matching_ids, include, **options)
         return {k: v for k, v in results.items() if v is not None}
 
+    def list_ids(self) -> list[str]:
+        paginator = self._client.get_paginator("list_objects_v2")
+        prefix = f"{self._prefix}/" if self._prefix else ""
+        prefix_len = len(prefix)
+        artifact_ids = []
+        for page in paginator.paginate(Bucket=self._bucket_id, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if key.endswith("/root.json"):
+                    rel_path = key[prefix_len:]
+                    aid = rel_path.split("/")[0]
+                    artifact_ids.append(aid)
+        return artifact_ids
+
     def list_parts(
         self,
         criteria: CriteriaDict,
