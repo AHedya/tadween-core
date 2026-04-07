@@ -15,34 +15,31 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Intended Audience :: Developers",
 ]
-dependencies = ["msgpack>=1.1.2", "pydantic~=2.0", "requests"]
+dependencies = ["msgpack>=1.1.2", "pydantic~=2.0", "requests", "numpy>=2,<3"]
+
+[tool.uv]
+default-groups = ["test", "dev"]
+
+[project.optional-dependencies]
+s3 = ["boto3>=1.42.26"]
+viz = ["graphviz>=0.21"]
+
+[dependency-groups]
+test = [
+    "moto>=5.1.22",
+    "pytest~=9.0.2",
+    "pytest-cov>=7.1.0",
+    "pytest-env~=1.2.0",
+    "pytest-timeout>=2.4.0",
+]
+dev = ["ipykernel~=6.30.1", "matplotlib>=3.10.8", "pandas>=3.0.1"]
+
 
 [project.urls]
 Homepage = "https://github.com/AHedya/tadween-core"
 Repository = "https://github.com/AHedya/tadween-core"
 Documentation = "https://github.com/AHedya/tadween-core#readme"
 Issues = "https://github.com/AHedya/tadween-core/issues"
-
-[tool.uv]
-[project.optional-dependencies]
-s3 = ["boto3>=1.42.26"]
-
-[dependency-groups]
-dev = [
-    "boto3>=1.42.56",
-    "graphviz>=0.21",
-    "ipykernel~=6.30.1",
-    "matplotlib>=3.10.8",
-    "moto>=5.1.22",
-    "numpy>=2.4.1",
-    "pandas>=3.0.1",
-    "polars>=1.37.1",
-    "pyarrow>=23.0.1",
-    "pytest~=9.0.2",
-    "pytest-cov>=7.1.0",
-    "pytest-env~=1.2.0",
-    "pytest-timeout>=2.4.0",
-]
 
 [build-system]
 requires = ["hatchling"]
