@@ -2,7 +2,7 @@ import logging
 import math
 from collections.abc import Iterable
 
-import polars as pl
+import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.patches import Patch
@@ -25,12 +25,6 @@ class RAMPlotter:
         show_average: bool = False,
         include_children: bool = False,
     ):
-        """_summary_
-
-        Args:
-            indexes (list[int] | None, optional): metrics indexes to plot. Defaults to None, means all.
-
-        """
         plt.figure(figsize=(12, 6))
         indexes = range(len(self.metrics)) if indexes is None else set(indexes)
 
@@ -54,8 +48,8 @@ class RAMPlotter:
             if show_average:
                 plt.axhline(y=metric.avg, color=color, linestyle=":", alpha=0.2)
             plt.text(
-                metric.data["time_lapsed"].item(-1),
-                metric.data["total_mb"].item(-1),
+                metric.data["time_lapsed"].iloc[-1],
+                metric.data["total_mb"].iloc[-1],
                 f"S{idx}",
                 color=color,
                 va="center",
@@ -116,7 +110,7 @@ class MemoryPlotter:
                 ax.axhline(y=metric.peak, color=color, linestyle="--", alpha=0.3)
                 ax.annotate(
                     f"peak {metric.peak:.1f} MB",
-                    xy=(t.item(0), metric.peak),
+                    xy=(t.iloc[0], metric.peak),
                     xytext=(4, 3),
                     textcoords="offset points",
                     color=color,
@@ -127,8 +121,8 @@ class MemoryPlotter:
                 ax.axhline(y=metric.avg, color=color, linestyle=":", alpha=0.2)
 
             ax.text(
-                t.item(-1),
-                mem.item(-1),
+                t.iloc[-1],
+                mem.iloc[-1],
                 f" S{idx}",
                 color=color,
                 va="center",
@@ -163,8 +157,6 @@ class MemoryPlotter:
         ax.grid(True, alpha=0.2)
 
         if show_details and detail_handles:
-            # Reserve extra bottom margin so the details legend doesn't clip.
-            # tight_layout alone doesn't account for out-of-axes legend boxes.
             fig.tight_layout()
             fig.subplots_adjust(bottom=0.22)
         else:
@@ -193,7 +185,6 @@ class MemoryPlotter:
         )
 
     def _build_details_legend(self, ax, handles: list):
-        """Placed inside the axes at the bottom so its width doesn't shrink the plot."""
         legend = ax.legend(
             handles=handles,
             loc="lower center",
@@ -256,11 +247,11 @@ class RuntimePlotter:
 
         for row_idx, metric in enumerate(metrics):
             df = (
-                metric.data.sort("task_total_duration", descending=True)
+                metric.data.sort_values("task_total_duration", ascending=False)
                 if sort_by_duration
                 else metric.data
             )
-            stages = df["stage"].unique(maintain_order=True).to_list()
+            stages = df["stage"].unique().tolist()
             colors = {stage: colormap(i % 10) for i, stage in enumerate(stages)}
 
             self._plot_gantt(axes[row_idx, 0], metric, df, colors, show_details)
@@ -272,7 +263,6 @@ class RuntimePlotter:
             gantt_axes = axes[:, 0]
             x_min = min(ax.get_xlim()[0] for ax in gantt_axes)
             x_max = max(ax.get_xlim()[1] for ax in gantt_axes)
-            # Infer tick step from the first axis
             ticks = gantt_axes[0].get_xticks()
             if len(ticks) >= 2:
                 step = ticks[1] - ticks[0]
@@ -284,26 +274,22 @@ class RuntimePlotter:
         fig.tight_layout()
         return fig
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _row_height(metric: RuntimeMetric) -> float:
-        return max(4.0, metric.data["task_id"].n_unique() * 0.4)
+        return max(4.0, metric.data["task_id"].nunique() * 0.4)
 
     @staticmethod
     def _plot_gantt(
         ax: Axes,
         metric: RuntimeMetric,
-        df: pl.DataFrame,
+        df: pd.DataFrame,
         colors: dict[str, tuple],
         show_details: bool,
     ) -> None:
-        tasks = df["task_id"].unique(maintain_order=True).to_list()
+        tasks = df["task_id"].unique().tolist()
         task_y = {tid: i for i, tid in enumerate(tasks)}
 
-        for row in df.iter_rows(named=True):
+        for _, row in df.iterrows():
             y = task_y[row["task_id"]]
             c = colors[row["stage"]]
             ax.barh(
@@ -346,18 +332,23 @@ class RuntimePlotter:
     @staticmethod
     def _annotate_efficiencies(
         ax: Axes,
-        df: pl.DataFrame,
+        df: pd.DataFrame,
         task_y: dict[str, int],
     ) -> None:
-        grouped = df.group_by("task_id").agg(
-            [
-                (pl.col("offset") + pl.col("waiting") + pl.col("duration"))
-                .max()
-                .alias("x_end"),
-                pl.col("efficiency").alias("efficiencies"),
-            ]
+        grouped = (
+            df.groupby("task_id")
+            .agg(
+                x_end=(
+                    "offset",
+                    lambda x: (
+                        x + df.loc[x.index, "waiting"] + df.loc[x.index, "duration"]
+                    ),
+                ).max(),
+                efficiencies=("efficiency", list),
+            )
+            .reset_index()
         )
-        for row in grouped.iter_rows(named=True):
+        for _, row in grouped.iterrows():
             label = ", ".join(f"{e:.0f}" for e in row["efficiencies"])
             ax.text(
                 row["x_end"],
@@ -372,18 +363,20 @@ class RuntimePlotter:
     @staticmethod
     def _plot_stage_distribution(
         ax: Axes,
-        df: pl.DataFrame,
+        df: pd.DataFrame,
         colors: dict[str, tuple],
     ) -> None:
-        stats = df.group_by("stage").agg(
-            [
-                pl.col("waiting").sum().alias("total_wait"),
-                pl.col("duration").sum().alias("total_dur"),
-            ]
+        stats = (
+            df.groupby("stage")
+            .agg(
+                total_wait=("waiting", "sum"),
+                total_dur=("duration", "sum"),
+            )
+            .reset_index()
         )
         total_volume = stats["total_wait"].sum() + stats["total_dur"].sum()
 
-        for i, row in enumerate(stats.to_dicts()):
+        for i, row in stats.iterrows():
             c = colors[row["stage"]]
             w = row["total_wait"] / total_volume
             d = row["total_dur"] / total_volume
@@ -399,7 +392,7 @@ class RuntimePlotter:
                 fontsize=8,
             )
 
-        stage_names = stats["stage"].to_list()
+        stage_names = stats["stage"].tolist()
         ax.set_xticks(range(len(stage_names)))
         ax.set_xticklabels(stage_names, fontsize=8, rotation=15, ha="right")
         ax.set_ylim(0, 1.1)

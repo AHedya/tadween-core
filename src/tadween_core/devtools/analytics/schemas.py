@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, fields
 from enum import IntEnum
 from typing import Any, NamedTuple
 
-import polars as pl
+import pandas as pd
 
 CHUNKS_PER_RAM_SAMPLE = 5
 RAM_HEADER = "#SESSION"
@@ -100,7 +100,7 @@ class MemorySession(NamedTuple):
 @dataclass(slots=True)
 class MemoryMetric:
     meta: MemoryMetadata
-    data: pl.DataFrame
+    data: pd.DataFrame
     id: Any | None = None
 
     _peak: float | None = field(default=None, init=False, repr=False)
@@ -188,7 +188,7 @@ class RAMSession(NamedTuple):
 @dataclass(slots=True)
 class RAMMetric:
     meta: RAMMetadata
-    data: pl.DataFrame
+    data: pd.DataFrame
     id: Any | None = None
 
     _peak: float | None = field(default=None, init=False, repr=False)
@@ -283,5 +283,5 @@ class RuntimeSession(NamedTuple):
 @dataclass(slots=True)
 class RuntimeMetric:
     meta: RuntimeMetadata
-    data: pl.DataFrame
+    data: pd.DataFrame
     id: Any | None = None
