@@ -143,6 +143,17 @@ class BaseMessageBroker(ABC):
         """Close broker connection"""
         pass
 
+    @abstractmethod
+    def add_listener(self, listener: "BrokerListener") -> None:
+        """Add listener to broker"""
+        pass
+
+    @abstractmethod
+    def remove_listener(self, listener: "BrokerListener") -> None:
+        """Remove listener to broker"""
+
+        pass
+
 
 class BrokerListener(ABC):
     """
