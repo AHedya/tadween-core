@@ -9,6 +9,7 @@ from typing_extensions import TypeVar
 
 from tadween_core.broker import BaseMessageBroker, Message
 from tadween_core.cache.base import BaseCache
+from tadween_core.exceptions import StageError
 from tadween_core.handler import BaseHandler, HandlerFactory, InputT, OutputT
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.stage.policy import DefaultStagePolicy, StagePolicy
@@ -273,7 +274,10 @@ class Workflow:
 
     def routing_handler_factory(self, stage: Stage, fn_name: str):
         def handler(msg: Message, stage=stage):
-            stage.submit_message(msg)
+            try:
+                stage.submit_message(msg)
+            except StageError:
+                pass
 
         handler.__name__ = fn_name
         return handler

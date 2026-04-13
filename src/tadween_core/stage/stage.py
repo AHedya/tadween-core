@@ -42,10 +42,12 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         logger: Logger | None = None,
         broker: BaseMessageBroker | None = None,
         task_queue: BaseTaskQueue[OutputT] | None = None,
+        log_exc_info: bool = True,
     ):
         self.handler = handler
         self.name = name or f"Stage:{self.handler.__class__.__name__}"
         self.logger = logger or getLogger(f"tadween.stage.{self.name}")
+        self.log_exc_info = log_exc_info
 
         self.policy = policy or DefaultStagePolicy()
         self.broker = broker
@@ -85,7 +87,9 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                 policy_name=self.policy.__class__.__name__,
                 method="intercept",
             )
-            self.logger.error(f"Policy failed to intercept: {err}")
+            self.logger.error(
+                f"Policy failed to intercept: {err}", exc_info=self.log_exc_info
+            )
             self.policy.on_error(message, err, self.broker)
             raise err from e
         if context and context.intercepted:
@@ -104,7 +108,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                 policy_name=self.policy.__class__.__name__,
                 method="resolve_inputs",
             )
-            self.logger.error(f"Policy failed to resolve inputs: {err}")
+            self.logger.error(f"Policy failed to resolve inputs: {err}", exc_info=True)
             self.policy.on_error(message, err, self.broker)
             raise err from e
 
@@ -171,7 +175,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                 stage_name=self.name,
                 task_id=task_id,
             )
-            self.logger.critical(str(err))
+            self.logger.critical(str(err), exc_info=self.log_exc_info)
             self.policy.on_error(message, err, broker=self.broker)
             return
 
@@ -187,7 +191,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                 method="on_done",
                 task_id=task_id,
             )
-            self.logger.error(str(err))
+            self.logger.error(str(err), exc_info=self.log_exc_info)
             self.policy.on_error(message, err, broker=self.broker)
             return
         if envelope.success:
@@ -208,16 +212,30 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                     method="on_success",
                     task_id=task_id,
                 )
-                self.logger.error(f"Policy.on_success failed: {err}")
+                self.logger.error(
+                    f"Policy.on_success failed: {err}", exc_info=self.log_exc_info
+                )
 
                 self.policy.on_error(message, err, broker=self.broker)
         else:
+            # Preserve the original exception as the cause
             err = HandlerError(
                 message=str(envelope.error),
                 stage_name=self.name,
                 task_id=task_id,
             )
-            self.logger.error(f"Task failed: {err}")
+            if envelope.error:
+                err.__cause__ = envelope.error
+
+            self.logger.error(
+                f"Task failed: {err}",
+                exc_info=envelope.error if self.log_exc_info else False,
+            )
+            if self.log_exc_info and envelope.traceback:
+                self.logger.error(
+                    f"Worker traceback for task {task_id}:\n{envelope.traceback}",
+                )
+
             self.policy.on_error(message, err, broker=self.broker)
 
     def _detect_input_type(self, handler: BaseHandler) -> type[InputT] | None:
@@ -285,7 +303,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                     message=f"Pydantic validation failed: {e}",
                     stage_name=self.name,
                 )
-                self.logger.error(str(err))
+                self.logger.error(str(err), exc_info=self.log_exc_info)
                 raise err from e
             except Exception as e:
                 err = InputValidationError(

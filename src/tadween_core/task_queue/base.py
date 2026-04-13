@@ -59,3 +59,4 @@ class TaskEnvelope(Generic[T]):
     metadata: TaskMetadata
     error: Exception | None = None
     success: bool = True
+    traceback: str | None = None

@@ -5,6 +5,7 @@ common patterns like caching, timing, and error logging.
 """
 
 import functools
+import logging
 import re
 from collections.abc import Callable
 from typing import Any, Literal, cast
@@ -18,6 +19,8 @@ from tadween_core.stage.policy import InterceptionContext
 from tadween_core.task_queue.base import TaskEnvelope
 
 P = ParamSpec("P")
+
+logger = logging.getLogger("tadween.stage.decorators")
 
 
 def write_cache(
@@ -177,7 +180,7 @@ def done_timing(
                 if callback is not None:
                     callback(resolved_name, cast(str, label), waiting, duration)
                 else:
-                    print(
+                    logger.info(
                         f"[{resolved_name}] {label}: ({round(waiting, 3)},{round(duration, 3)})"
                     )
 
@@ -196,25 +199,28 @@ def done_timing(
 def log_errors(
     mode: str = "before",
     callback: Callable[[Message, Exception], None] | None = None,
+    log_exc_info: bool = True,
 ) -> Callable[[Callable[P, None]], Callable[P, None]]:
     """
     Decorator for on_error that logs errors.
 
     Logs error information using the provided callback or falls back
-    to printing to stdout.
+    to the module logger.
 
     Args:
         mode: "before" to log before calling original method, "after" to log after.
             Defaults to "before" to ensure error is captured even if original raises.
         callback: Optional callback(message, error) for custom logging.
-            If None, prints to stdout in format: "error: {error}"
+            If None, logs to 'tadween.stage.decorators' logger.
+        log_exc_info: Whether to include exception traceback in logs.
+            Defaults to False.
 
     Example:
         @log_errors()
         def on_error(self, message, error, broker=None):
             pass  # Error logged automatically
 
-        @log_errors(mode="after", callback=my_logger)
+        @log_errors(log_exc_info=True)
         def on_error(self, message, error, broker=None):
             pass
     """
@@ -231,7 +237,10 @@ def log_errors(
                 if callback is not None:
                     callback(message, error)
                 else:
-                    print(f"error: {message}, {error}")
+                    logger.error(
+                        f"Error: {error}. Message: {message}",
+                        exc_info=error if log_exc_info else False,
+                    )
 
             if mode == "before":
                 do_log()

@@ -329,7 +329,7 @@ class InMemoryBroker(BaseMessageBroker):
                     ),
                 )
             elif exc is not None:
-                self.logger.error(f"Broker handler error: {exc}")
+                self.logger.error(f"Broker handler error: {exc}", exc_info=True)
                 self._notify_listeners(
                     "on_message_failed", message=message, topic=topic, error=exc
                 )
@@ -430,6 +430,7 @@ class InMemoryBroker(BaseMessageBroker):
                 except Exception as e:
                     self.logger.error(
                         f"Error processing message [{getattr(message, 'id', 'unknown')}]: {e}",
+                        exc_info=True,
                     )
                     if message:
                         self.ack(message.id)
@@ -439,6 +440,7 @@ class InMemoryBroker(BaseMessageBroker):
             except Exception as e:
                 self.logger.error(
                     f"Dispatch loop critical error on topic {topic}: {e}",
+                    exc_info=True,
                 )
                 continue
 
@@ -449,4 +451,7 @@ class InMemoryBroker(BaseMessageBroker):
             try:
                 getattr(listener, event)(**kwargs)
             except Exception as e:
-                self.logger.error(f"Listener error in {event}: {e}")
+                self.logger.error(
+                    f"Listener error in {event}: {e}",
+                    exc_info=True,
+                )

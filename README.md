@@ -56,6 +56,7 @@ The framework is composed of several independent but integrated modules:
 | **Repository** | Persistence layer for Artifacts. | [docs](src/tadween_core/repo/README.md) |
 | **Stage** | Domain-related layer. Manages tq, cache, repo. managed by the workflow | [docs](src/tadween_core/stage/README.md) |
 | **Workflow** | Orchestrates the DAG and manages stage-level logic. | [docs](src/tadween_core/workflow/README.md) |
+| **Logging** | Logger configuration interfaces for the `tadween` namespace. | [docs](src/tadween_core/logger/README.md) |
 
 ---
 *For detailed implementation details, please refer to the specific component documentation linked above.*
@@ -80,20 +81,15 @@ PYTHON_GIL=0 uv run --python 3.14t pytest
 
 ## Logger
 
-The library logger follows Python best practices and is **silent by default**. To quickly configure logging, use `tadween_core.set_logger`, which sets up a default logger configuration for the parent. Review the implementation [here](./src/tadween_core/_logging.py).<br>
-The root logger for the library uses the namespace `tadween`. And each major component logger use standard hierarchical naming, for example: `tadween.cache`, `tadween.stage`, `tadween.repo`, ...etc.<br>
-You may provide your own logger via dependency injection (DI), which is supported by most major components.
+The library logger follows Python best practices and is **silent by default**. Three configuration interfaces are available:
 
-### Custom Logger Integration
+- **StandardLogger** — Plug-and-play. Direct handlers, no cleanup required.
+- **QueueLogger** — Thread-based queue with background listener. Closing-demanding (`close()` or `with`).
+- **ProcessQueueLogger** — Process-safe queue (`multiprocessing.Queue`) with background listener. Closing-demanding. Workers receive `log_queue` to create their own `QueueHandler`.
 
-If you want to avoid interacting with the library’s logger hierarchy, you can either do:
+All three accept custom `console_formatter` and `file_formatter` for dependency injection. The root logger uses the namespace `tadween` with hierarchical naming (e.g., `tadween.cache`, `tadween.stage`). Most components also support custom loggers via DI.
 
-- Use a logger with a **different name** (e.g., `"my_custom_logger"`)
-- Disable propagation by setting:
-    ```python
-    logger.propagate = False
-    ```
-    Make sure to attach handlers for disabled propagation loggers.
+See [logger README](src/tadween_core/logger/README.md) for usage and configuration details.
 
 ## The Backstory
 <details>

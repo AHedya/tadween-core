@@ -1,7 +1,6 @@
 import logging
 from importlib.metadata import PackageNotFoundError, version
 
-from ._logging import set_logger
 from .exceptions import (
     HandlerError,
     InputValidationError,
@@ -10,6 +9,7 @@ from .exceptions import (
     StageError,
     TadweenError,
 )
+from .logger import ProcessQueueLogger, QueueLogger, StandardLogger, set_logger
 
 logger = logging.getLogger("tadween")
 logger.addHandler(logging.NullHandler())
@@ -28,6 +28,9 @@ __all__ = [
     "InputValidationError",
     "HandlerError",
     "RoutingError",
+    "StandardLogger",
+    "QueueLogger",
+    "ProcessQueueLogger",
     "set_logger",
     "__version__",
 ]

@@ -103,7 +103,7 @@ class WorkflowRoutingPolicy(
                     method="payload_extractor",
                     task_id="N/A",
                 )
-                self.logger.error(f"{err}")
+                self.logger.error(f"{err}", exc_info=True)
                 raise err from e
 
             message.metadata.update(
@@ -127,7 +127,7 @@ class WorkflowRoutingPolicy(
                         topic=topic,
                         task_id="N/A",
                     )
-                    self.logger.error(f"{err}")
+                    self.logger.error(f"{err}", exc_info=True)
                     raise err from e
         if active_broker and context.action.ack:
             active_broker.ack(message.id)
@@ -166,7 +166,7 @@ class WorkflowRoutingPolicy(
                     method="payload_extractor",
                     task_id=task_id,
                 )
-                self.logger.error(f"{err}")
+                self.logger.error(f"{err}", exc_info=True)
                 raise err from e
 
             # propagate metadata
@@ -183,7 +183,7 @@ class WorkflowRoutingPolicy(
                         topic=topic,
                         task_id=task_id,
                     )
-                    self.logger.error(f"{err}")
+                    self.logger.error(f"{err}", exc_info=True)
                     raise err from e
 
         # We do this here so the wrapper owns the "Unit of Work" completion.

@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import traceback
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -45,6 +46,7 @@ def _execute_wrapped(
             metadata=TaskMetadata(task_id, start_t, end_t, submit_time),
             error=e,
             success=False,
+            traceback=traceback.format_exc(),
         )
 
 
