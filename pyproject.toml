@@ -1,6 +1,6 @@
 [project]
 name = "tadween-core"
-version = "0.1.0a7"
+version = "0.1.0a8"
 description = "`Tadween-core` is a modular, embedded micro-orchestrator designed for building complex, stateful processing pipelines from simple linear chains to full DAG-based workflows with zero external services required."
 authors = [{ name = "Abdulrahman Hedya", email = "abdohedya19@gmail.com" }]
 readme = "README.md"
@@ -82,6 +82,7 @@ omit = [
     "src/tadween_core/devtools/*",
     "src/tadween_core/task_queue/dynamic.py", # covered by both process and thread queues
     "src/tadween_core/handler/defaults/*",
+    "src/tadween_core/handler/dummy.py",
     "src/tadween_core/broker/listeners.py",
 ]
 [tool.pytest_env]
