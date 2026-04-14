@@ -35,7 +35,6 @@ class StatsCollector(BrokerListener):
         self._topic_handlers: dict[
             str, list[Callable]
         ] = {}  # topic -> list of handlers
-        self._active_threads: set[str] = set()
 
     def on_publish(self, message: Message) -> None:
         with self._lock:
@@ -111,13 +110,6 @@ class StatsCollector(BrokerListener):
             if topic not in self._queue_sizes:
                 self._queue_sizes[topic] = 0
 
-    def on_dispatch_thread_started(self, topic: str) -> None:
-        with self._lock:
-            self._active_threads.add(topic)
-
-    def on_dispatch_thread_stopped(self, topic: str) -> None:
-        pass
-
     def get_stats(self) -> BrokerStats:
         """
         Generate current statistics snapshot.
@@ -148,7 +140,7 @@ class StatsCollector(BrokerListener):
                     messages_processed=counters.get("processed", 0),
                     messages_failed=counters.get("failed", 0),
                     handler_names=handler_names,
-                    is_active=topic in self._active_threads,
+                    is_active=len(handlers) > 0,
                 )
 
             uptime = time.perf_counter() - self._start_time
@@ -198,7 +190,6 @@ class StatsCollector(BrokerListener):
 
             for topic_name, topic_stats in sorted(stats.topics.items()):
                 print(f"\nTopic: {topic_name}")
-                print(f"  Status: {'Active' if topic_stats.is_active else 'Inactive'}")
                 print(f"  Handlers: {topic_stats.handler_count}")
                 print(f"  Subscriptions: {topic_stats.subscription_count}")
                 print(f"  Queue Size (Waiting): {topic_stats.queue_size}")

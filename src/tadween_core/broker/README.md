@@ -16,7 +16,6 @@ Typically, message bus should only deliver messages and doesn't do any work. In 
 The `broker` subpackage includes a `StatsCollector` (a `BrokerListener`) to track:
 - Message throughput (published, processed, failed).
 - Queue sizes per topic.
-- Active dispatch threads.
 
 ## Anatomy
 The `broker` subpackage anatomy
@@ -36,8 +35,8 @@ The `broker` subpackage anatomy
 
 ## InMemoryBroker
 
-Must be closed after any submissions, lest dispatched threads will hang the main process.
-Make sure to consider settings `timeout` in `broker.close`, unless you want to wait indefinitely and are sure there's no un-acknowledged message, they can hang the broker forever.
+Must be closed after any submissions, lest the dispatch thread will hang the main process.
+Uses a unified dispatcher architecture where all messages are centrally queued and routed to a thread pool for execution.
 
 ## Observer Pattern
 
@@ -47,3 +46,6 @@ Implement `BrokerListener` to hook into the broker's lifecycle:
 - `on_message_dispatched`: Called when a message is retrieved for processing.
 - `on_message_processed`: Called when a message is successfully processed.
 - `on_message_failed`: Called when processing fails.
+- `on_subscribe`: Called when a new subscription is added.
+- `on_unsubscribe`: Called when a subscription is removed.
+- `on_topic_created`: Called when a new topic is created.

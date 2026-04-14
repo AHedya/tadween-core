@@ -50,7 +50,7 @@ class TopicStats:
     messages_processed: int = 0  # Counts successful handler executions
     messages_failed: int = 0  # Counts failed handler executions
     handler_names: list[str] = field(default_factory=list)
-    is_active: bool = True
+    is_active: bool = True  # True when topic has active subscribers
 
     def to_dict(self) -> dict:
         """Convert topic stats to a dictionary"""
@@ -97,8 +97,6 @@ BrokerEvents: TypeAlias = Literal[
     "on_subscribe",
     "on_unsubscribe",
     "on_topic_created",
-    "on_dispatch_thread_started",
-    "on_dispatch_thread_stopped",
 ]
 
 
@@ -194,14 +192,4 @@ class BrokerListener(ABC):
     @abstractmethod
     def on_topic_created(self, topic: str) -> None:
         """Called when a new topic is created"""
-        pass
-
-    @abstractmethod
-    def on_dispatch_thread_started(self, topic: str) -> None:
-        """Called when a dispatch thread starts for a topic"""
-        pass
-
-    @abstractmethod
-    def on_dispatch_thread_stopped(self, topic: str) -> None:
-        """Called when a dispatch thread stops for a topic"""
         pass

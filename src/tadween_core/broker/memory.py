@@ -13,26 +13,29 @@ from .base import (
     Message,
 )
 
-THREAD_EXIT_GRACE: float = 0.2
+THREAD_EXIT_GRACE: float = 0.5
 
 
 class InMemoryBroker(BaseMessageBroker):
     """
     Simple in-memory broker for development/testing or even managed short-lived workflows.
     NOT suitable for production (no persistence, loses messages on crash).
+    Uses a unified dispatcher architecture where messages from all topics are centrally
+    queued and routed to a worker pool.
     """
 
     def __init__(
-        self, max_workers: int | None = None, logger: logging.Logger | None = None
+        self, max_workers: int | None = 4, logger: logging.Logger | None = None
     ):
-        self._topics: dict[str, Queue[Message]] = {}
+        self._unified_queue: Queue[Message | None] = Queue()
         # Each entry: (callable, auto_ack, handler_timeout)
         self._handlers: dict[str, tuple[tuple[Callable, bool, float | None], ...]] = {}
         # subscription_id -> (topic, handler, auto_ack, handler_timeout)
         self._subscriptions: dict[str, tuple[str, Callable, bool, float | None]] = {}
         self._lock = threading.Lock()
         self._running = True
-        self._dispatch_threads: dict[str, threading.Thread] = {}
+        self._dispatch_thread: threading.Thread | None = None
+        self._known_topics: set[str] = set()
         self.logger = logger or logging.getLogger("tadween.broker.memory")
 
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -43,29 +46,29 @@ class InMemoryBroker(BaseMessageBroker):
         # observer pattern
         self._listeners: list[BrokerListener] = []
 
+        self._start_dispatch_thread()
+
     def publish(self, message: Message) -> None:
         topic_created = False
-        thread_started = False
         with self._lock:
             if not self._running:
-                self.logger.warning("Broker already closed")
                 raise RuntimeError("Broker closed")
+
+            if not self._dispatch_thread.is_alive():
+                raise RuntimeError(
+                    "Dispatch thread has exited unexpectedly; broker is unusable"
+                )
 
             self._pending_acks[message.id] = self._pending_acks.get(message.id, 0) + 1
 
-            if message.topic not in self._topics:
-                self._topics[message.topic] = Queue()
+            if message.topic not in self._known_topics:
+                self._known_topics.add(message.topic)
                 topic_created = True
-            self._topics[message.topic].put(message)
 
-            if message.topic not in self._dispatch_threads:
-                self._start_dispatch_thread(message.topic)
-                thread_started = True
+            self._unified_queue.put(message)
 
         if topic_created:
             self._notify_listeners("on_topic_created", topic=message.topic)
-        if thread_started:
-            self._notify_listeners("on_dispatch_thread_started", topic=message.topic)
         self._notify_listeners("on_publish", message=message)
 
     def subscribe(
@@ -75,29 +78,17 @@ class InMemoryBroker(BaseMessageBroker):
         auto_ack: bool = True,
         handler_timeout: float | None = None,
     ) -> str:
-        """
-        Subscribe *handler* to *topic*.
-
-        Parameters
-        ---
-        topic:
-            Topic to subscribe to.
-        handler:
-            Callable invoked for each message.
-        auto_ack:
-            When True (default) the message is acked automatically once the
-            handler completes or times out. Set to False for manual ack/nack.
-        handler_timeout:
-            Soft upper bound (seconds) on handler execution time. best-effort:
-            if the handler is still running after handler_timeout seconds we
-            ack defensively and log a warning, but the thread runs to
-            completion in the pool. None means no timeout, Dangerous if
-            the handler can block indefinitely.
-        """
         subscription_id = f"{topic}:{uuid.uuid4()}"
-        thread_started = False
 
         with self._lock:
+            if not self._running:
+                raise RuntimeError("Broker closed")
+
+            if not self._dispatch_thread.is_alive():
+                raise RuntimeError(
+                    "Dispatch thread has exited unexpectedly; broker is unusable"
+                )
+
             current = self._handlers.get(topic, ())
             self._handlers[topic] = current + ((handler, auto_ack, handler_timeout),)
             self._subscriptions[subscription_id] = (
@@ -107,12 +98,13 @@ class InMemoryBroker(BaseMessageBroker):
                 handler_timeout,
             )
 
-            if topic not in self._dispatch_threads:
-                self._start_dispatch_thread(topic)
-                thread_started = True
+            topic_created = False
+            if topic not in self._known_topics:
+                self._known_topics.add(topic)
+                topic_created = True
 
-        if thread_started:
-            self._notify_listeners("on_dispatch_thread_started", topic=topic)
+        if topic_created:
+            self._notify_listeners("on_topic_created", topic=topic)
         self._notify_listeners(
             "on_subscribe",
             topic=topic,
@@ -133,6 +125,7 @@ class InMemoryBroker(BaseMessageBroker):
                 )
                 if not self._handlers[topic]:
                     del self._handlers[topic]
+                    self._known_topics.discard(topic)
 
         self._notify_listeners(
             "on_unsubscribe", topic=topic, subscription_id=subscription_id
@@ -187,8 +180,9 @@ class InMemoryBroker(BaseMessageBroker):
 
         self._stop_dispatch_threads()
         with self._lock:
-            threads = list(self._dispatch_threads.values())
-        self._join_threads(threads)
+            thread = self._dispatch_thread
+        if thread:
+            self._join_threads([thread])
 
         # All handlers are already acked (quiescence confirmed above).
         self._executor.shutdown(wait=False, cancel_futures=False)
@@ -207,7 +201,7 @@ class InMemoryBroker(BaseMessageBroker):
                 return
             self._pending_acks[message_id] -= 1
             if self._pending_acks[message_id] <= 0:
-                del self._pending_acks[message_id]
+                self._pending_acks.pop(message_id, None)
                 if not self._pending_acks:
                     self._quiescence_cond.notify_all()
 
@@ -224,24 +218,24 @@ class InMemoryBroker(BaseMessageBroker):
         with self._lock:
             self._listeners.remove(listener)
 
-    def _start_dispatch_thread(self, topic: str) -> None:
-        """Start a dispatch thread for *topic*. Must be called under self._lock."""
-        if topic not in self._dispatch_threads:
-            thread = threading.Thread(
-                target=self._dispatch_loop, args=(topic,), daemon=False
-            )
-            thread.start()
-            self._dispatch_threads[topic] = thread
+    def _start_dispatch_thread(self) -> None:
+        """Start the unified dispatch thread."""
+        self._dispatch_thread = threading.Thread(
+            target=self._dispatch_loop,
+            name="InMemoryBrokerDispatcher",
+            daemon=False,
+        )
+        self._dispatch_thread.start()
 
     def _stop_dispatch_threads(self) -> None:
         """
-        Set _running=False and post a None sentinel to every topic queue so
-        dispatch threads wake immediately instead of waiting polling.
+        Set _running=False and post a None sentinel to the unified queue.
         """
         with self._lock:
+            if not self._running:
+                return
             self._running = False
-            for q in self._topics.values():
-                q.put(None)
+            self._unified_queue.put(None)
 
     def _force_close(self) -> None:
         """Discard all queued / pending-ack work and stop immediately. Never raises."""
@@ -250,21 +244,21 @@ class InMemoryBroker(BaseMessageBroker):
         )
         with self._quiescence_cond:
             self._running = False
-            for q in self._topics.values():
-                while True:
-                    try:
-                        q.get_nowait()
-                        q.task_done()
-                    except Empty:
-                        break
-                q.put(None)
+            while True:
+                try:
+                    self._unified_queue.get_nowait()
+                    self._unified_queue.task_done()
+                except Empty:
+                    break
+            self._unified_queue.put(None)
             self._pending_acks.clear()
             self._quiescence_cond.notify_all()
 
         self._executor.shutdown(wait=False, cancel_futures=True)
         with self._lock:
-            threads = list(self._dispatch_threads.values())
-        self._join_threads(threads)
+            thread = self._dispatch_thread
+        if thread:
+            self._join_threads([thread])
         self.logger.info("Broker force-closed.")
 
     def _join_threads(
@@ -368,28 +362,21 @@ class InMemoryBroker(BaseMessageBroker):
         )
         self._executor.submit(handler_func, message).add_done_callback(callback)
 
-    def _dispatch_loop(self, topic: str) -> None:
+    def _dispatch_loop(self) -> None:
         """
-        Dispatch messages to subscribers for a single topic.
-
-        This loop is now a pure submission loop — it pulls a message from the
-        queue, adjusts pending_acks for fan-out, submits each handler to the
-        executor pool, and immediately moves to the next message.  No blocking
-        on handler execution.
+        Dispatch messages to subscribers from the unified queue.
         """
         while self._running:
             try:
-                q = self._topics.get(topic)
-                if not q:
-                    time.sleep(0.1)
-                    continue
                 try:
-                    message = q.get(timeout=0.1)
+                    message = self._unified_queue.get(timeout=0.1)
                 except Empty:
                     continue
 
                 if message is None:  # stop sentinel from _stop_dispatch_threads
                     break
+
+                topic = message.topic
 
                 try:
                     self._notify_listeners(
@@ -408,6 +395,7 @@ class InMemoryBroker(BaseMessageBroker):
                             # publish() added 1 for the queue slot.
                             # Fan out to num_handlers. Net: +(num_handlers - 1)
                             self._pending_acks[message.id] += num_handlers - 1
+
                         if self._pending_acks.get(message.id, 0) <= 0:
                             self._pending_acks.pop(message.id, None)
                             if not self._pending_acks:
@@ -435,16 +423,14 @@ class InMemoryBroker(BaseMessageBroker):
                     if message:
                         self.ack(message.id)
                 finally:
-                    q.task_done()
+                    self._unified_queue.task_done()
 
             except Exception as e:
                 self.logger.error(
-                    f"Dispatch loop critical error on topic {topic}: {e}",
+                    f"Dispatch loop critical error: {e}",
                     exc_info=True,
                 )
                 continue
-
-        self._notify_listeners("on_dispatch_thread_stopped", topic=topic)
 
     def _notify_listeners(self, event: BrokerEvents, **kwargs) -> None:
         for listener in self._listeners:
