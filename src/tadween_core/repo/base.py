@@ -3,10 +3,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, Generic, Literal, TypeVar
 
+from typing_extensions import TypeVar as DefaultTypeVar
+
 from tadween_core.types.artifact import BaseArtifact
 from tadween_core.types.artifact.part import BaseArtifactPart
 
-PartNameT = TypeVar("PartNameT", bound=str)
+PartNameT = DefaultTypeVar("PartNameT", bound=str, default=str)
 ART = TypeVar("ART", bound=BaseArtifact)
 
 FilterOperator = Literal["eq", "ne", "gt", "lt", "ge", "le"]

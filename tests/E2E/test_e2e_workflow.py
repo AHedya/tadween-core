@@ -215,9 +215,9 @@ def test_full_e2e_workflow(
 
     # Helper to wait for the entire workflow to settle
     def wait_for_settle():
-        wf._stages["ingestion"].task_queue.wait_all(timeout=5)
-        wf._stages["processing"].task_queue.wait_all(timeout=5)
-        wf._stages["finalization"].task_queue.wait_all(timeout=5)
+        wf._stages["ingestion"].wait_all(timeout=5)
+        wf._stages["processing"].wait_all(timeout=5)
+        wf._stages["finalization"].wait_all(timeout=5)
         inmemory_broker.join(timeout=5)
 
     # Scenario 1: Happy Path

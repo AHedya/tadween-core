@@ -3,15 +3,44 @@
 A `Stage` is the domain layer of the pipeline. Where all other components (brokers, queues, caches, repos) are generic infrastructure, a Stage binds
 them together around a specific piece of work.
 
-A Stage is defined by three things:
+A Stage is defined by four things:
 - **Handler:** what computation this stage performs.
 - **Policy:** what happens at each point in the stage's lifecycle.
-- **Task Queue:** how that computation is executed (thread vs. process,
-  worker count, initializer).
+- **Task Queue:** how that computation is executed (thread vs. process, worker count, initializer).
+- **Stage Queue:** a bounded back-pressure buffer that decouples message submission from execution.
 
 Optionally, a Stage can hold a `Cache`, `Repo`, and `Broker`.
 
 ---
+
+## Internal Pipeline
+
+```
+submit_message → [stage queue] → collector thread → _process_message → task queue → callback
+```
+
+- **Stage queue** (`queue.Queue`): accepts messages via `submit_message`. When the queue is full, the caller blocks until a slot frees up. `queue_size=0` (default) means unbounded — no back-pressure.
+- **Collector thread**: a daemon thread that continuously pulls messages from the stage queue and runs `_process_message`.
+- **Task registry**: maps `message.id` → `task_id` so callers can resolve a submission ID to the underlying worker ID via `get_worker_task_id`.
+
+---
+
+## Submission APIs
+
+| Method | Description |
+|---|---|
+| `submit_message(message, timeout=None)` | Submit a pre-built `Message`. Returns the message ID. Blocks if stage queue is full. |
+| `submit(input_data, *, metadata=None, topic="N/A")` | Convenience: wraps raw input in a `Message` and delegates to `submit_message`. |
+
+---
+
+## Lifecycle Management
+
+| Method | Description |
+|---|---|
+| `wait_all(timeout=None)` | Block until the stage queue is drained **and** all tasks in the task queue have completed. |
+| `close(timeout=5, force=False)` | Shut down the stage. Unless `force`, drains queues gracefully first. |
+| `get_worker_task_id(message_id)` | Resolve a message ID to its task-queue worker ID. |
 
 ## Stage Policy
 
@@ -42,14 +71,15 @@ nothing at all. The stage will not proceed.
 
 ### Lifecycle order
 ```
-on_received
-└── intercept → True:  policy owns everything from here
-└── intercept → False:
-    resolve_inputs
-    on_queued
-    on_running
-    on_done
-    on_success | on_error
+submit_message → stage queue → collector thread
+    on_received
+    └── intercept → True:  policy owns everything from here
+    └── intercept → False:
+        resolve_inputs
+        validate → task queue → on_queued
+        on_running
+        on_done
+        on_success | on_error
 ```
 
 #### Interception gotchas
@@ -97,8 +127,9 @@ def resolve_inputs(self, message, audio=None, **kwargs):
 ```
 └── stage
     ├── __init__.py
-    ├── policy.py   -> Base contract, DefaultStagePolicy (no-op), StagePolicyBuilder.
-    ├── stage.py    -> Stage implementation.
+    ├── policy.py      → Base contract, DefaultStagePolicy (no-op), StagePolicyBuilder.
+    ├── decorators.py   → Policy decorators (cache, repo injection, timing, error logging).
+    ├── stage.py        → Stage implementation.
     └── README.md
 ```
 

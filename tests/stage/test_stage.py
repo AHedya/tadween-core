@@ -82,26 +82,26 @@ class TestStageSubmission:
 
         assert task_id is not None
         assert isinstance(task_id, str)
-        success_stage.task_queue.wait_all()
+        success_stage.wait_all()
 
     def test_submit_convenience_method(self, success_stage):
         input_data = InputModel(value=100)
         task_id = success_stage.submit(input_data)
 
         assert task_id is not None
-        success_stage.task_queue.wait_all()
+        success_stage.wait_all()
 
     def test_submit_with_dict_payload(self, success_stage):
         task_id = success_stage.submit({"value": 50})
 
         assert task_id is not None
-        success_stage.task_queue.wait_all()
+        success_stage.wait_all()
 
     def test_submit_with_metadata(self, success_stage):
         task_id = success_stage.submit({"value": 1}, metadata={"trace_id": "abc123"})
 
         assert task_id is not None
-        success_stage.task_queue.wait_all()
+        success_stage.wait_all()
 
 
 class TestStageInputValidation:
@@ -109,27 +109,43 @@ class TestStageInputValidation:
         msg = Message(topic="test", payload={"value": 10})
         task_id = success_stage.submit_message(msg)
 
-        success_stage.task_queue.wait_all()
+        success_stage.wait_all()
         assert task_id is not None
 
     def test_valid_model_input_passed_through(self, success_stage):
         msg = Message(topic="test", payload=InputModel(value=20))
         task_id = success_stage.submit_message(msg)
 
-        success_stage.task_queue.wait_all()
+        success_stage.wait_all()
         assert task_id is not None
 
-    def test_invalid_input_missing_field_raises(self, success_stage):
+    def test_invalid_input_missing_field_raises(self, create_stage):
+        errors = []
+
+        class ErrorPolicy(DefaultStagePolicy):
+            def on_error(self, message, error, broker=None):
+                errors.append(error)
+
+        stage = create_stage(SuccessHandler(), policy=ErrorPolicy())
         msg = Message(topic="test", payload={"wrong_key": 1})
+        stage.submit_message(msg)
+        stage.wait_all()
 
-        with pytest.raises(InputValidationError):
-            success_stage.submit_message(msg)
+        assert any(isinstance(e, InputValidationError) for e in errors)
 
-    def test_invalid_input_wrong_type_raises(self, success_stage):
+    def test_invalid_input_wrong_type_raises(self, create_stage):
+        errors = []
+
+        class ErrorPolicy(DefaultStagePolicy):
+            def on_error(self, message, error, broker=None):
+                errors.append(error)
+
+        stage = create_stage(SuccessHandler(), policy=ErrorPolicy())
         msg = Message(topic="test", payload={"value": "not_an_int"})
+        stage.submit_message(msg)
+        stage.wait_all()
 
-        with pytest.raises(InputValidationError):
-            success_stage.submit_message(msg)
+        assert any(isinstance(e, InputValidationError) for e in errors)
 
 
 class TestStageHandlerExecution:
@@ -145,7 +161,7 @@ class TestStageHandlerExecution:
         stage = create_stage(CaptureHandler(), name="CaptureStage")
 
         stage.submit({"value": 42})
-        stage.task_queue.wait_all()
+        stage.wait_all()
 
         assert len(results) == 1
         assert results[0].result == "captured_42"
@@ -166,7 +182,7 @@ class TestStagePolicy:
         )
 
         stage.submit({"value": 99})
-        stage.task_queue.wait_all()
+        stage.wait_all()
 
         assert len(captured_inputs) == 1
         assert captured_inputs[0] == {"value": 99}
@@ -187,7 +203,7 @@ class TestStagePolicy:
         )
 
         stage.submit({"value": 10})
-        stage.task_queue.wait_all()
+        stage.wait_all()
         stage.close()
 
         assert len(success_results) == 1
@@ -233,7 +249,7 @@ class TestStagePolicy:
         )
 
         stage.submit({"value": 1})
-        stage.task_queue.wait_all()
+        stage.wait_all()
 
         assert len(executed) == 0
 

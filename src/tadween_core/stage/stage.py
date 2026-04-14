@@ -1,4 +1,6 @@
 import functools
+import queue
+import threading
 from concurrent.futures import Future
 from logging import Logger, getLogger
 from typing import Any, Generic, get_args, get_origin, get_type_hints
@@ -30,6 +32,23 @@ from .policy import (
 
 
 class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
+    """
+    A stage binds a handler, policy, and task queue around a specific piece of work.
+
+    Internally, a stage uses a bounded **stage queue** and a **collector thread**
+    to decouple message submission from execution and provide back-pressure:
+
+        submit_message → [stage queue] → collector thread → _process_message → task queue → callback
+
+    * **Stage queue**: bounded internal buffer. When full, ``submit_message``
+        blocks until a slot frees up.  ``queue_size=0`` (default) = unbounded.
+    * **Collector thread**: daemon that drains the stage queue and feeds each
+        message through ``_process_message`` (the policy lifecycle).
+    * **Task registry**: maps ``message.id`` → ``task_id`` so callers can
+        correlate a submission ID with the underlying worker via
+        ``get_worker_task_id``.
+    """
+
     def __init__(
         self,
         handler: BaseHandler[InputT, OutputT],
@@ -43,6 +62,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         broker: BaseMessageBroker | None = None,
         task_queue: BaseTaskQueue[OutputT] | None = None,
         log_exc_info: bool = True,
+        queue_size: int = 0,
     ):
         self.handler = handler
         self.name = name or f"Stage:{self.handler.__class__.__name__}"
@@ -62,10 +82,40 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             name=f"TaskQueue-{self.name}",
         )
 
-    def submit_message(self, message: Message) -> str | None:
-        """
-        Submit a message to be processed.
+        # Internal queueing and collector
+        self._stage_queue: queue.Queue[Message] = queue.Queue(maxsize=queue_size)
+        self._task_registry: dict[str, str | None] = {}  # message.id -> task_id
+        self._registry_lock = threading.Lock()
+        self._stop_event = threading.Event()
 
+        self._collector_thread = threading.Thread(
+            target=self._collector_loop, name=f"Collector-{self.name}", daemon=True
+        )
+        self._collector_thread.start()
+
+    def submit_message(self, message: Message, timeout: int | None = None) -> str:
+        """
+        Submit a message to the stage queue.
+
+        Returns the message ID (for submission tracking). The worker task ID
+        can later be resolved via ``get_worker_task_id``.
+
+        Blocks if the stage queue is full, until a slot frees up or *timeout*
+        expires. Raises ``RuntimeError`` if the stage is closed.
+        """
+        if self._stop_event.is_set():
+            raise RuntimeError(f"Stage {self.name} is closed")
+
+        with self._registry_lock:
+            self._task_registry[message.id] = None
+
+        # Block until a slot is free
+        self._stage_queue.put(message, block=True, timeout=timeout)
+
+        return message.id
+
+    def _process_message(self, message: Message) -> None:
+        """
         Flow:
         1. Policy decides whether to PROCESS, SKIP, or CANCEL (on_submitted).
         2. Policy resolves raw inputs (Cache -> Payload -> Repo).
@@ -74,7 +124,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         5. Callback triggers Policy success/failure hooks.
 
         Returns:
-            task_id (str | None): returns task_id _if_ any tasks are enqueued. Returns None if task is skipped or cancelled
+            None
         """
 
         # step 1: intercept
@@ -91,7 +141,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                 f"Policy failed to intercept: {err}", exc_info=self.log_exc_info
             )
             self.policy.on_error(message, err, self.broker)
-            raise err from e
+            return
         if context and context.intercepted:
             self.logger.info(f"Intercepted. Reason: {context.reason}")
             return
@@ -110,7 +160,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             )
             self.logger.error(f"Policy failed to resolve inputs: {err}", exc_info=True)
             self.policy.on_error(message, err, self.broker)
-            raise err from e
+            return
 
         # step 3: validate
         try:
@@ -123,19 +173,31 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                 else InputValidationError(str(e), stage_name=self.name)
             )
             self.policy.on_error(message, err, self.broker)
-            raise err from e
+            return
 
         # step4: enqueue
-        callback = functools.partial(self._on_task_done, message)
-        # FIXME: `on_running` is currently disabled. Reason: not stable with process task queue.
-        # on_running = functools.partial(self.policy.on_running, message)
-        task_id = self.task_queue.submit(
-            fn=self.handler.run,
-            on_done=callback,
-            inputs=input_data,
-        )
-
-        return task_id
+        try:
+            callback = functools.partial(self._on_task_done, message)
+            # FIXME: `on_running` is currently disabled. Reason: not stable with process task queue.
+            # on_running = functools.partial(self.policy.on_running, message)
+            task_id = self.task_queue.submit(
+                fn=self.handler.run,
+                on_done=callback,
+                inputs=input_data,
+            )
+            with self._registry_lock:
+                self._task_registry[message.id] = task_id
+        except Exception as e:
+            err = (
+                e
+                if isinstance(e, StageError)
+                else StageError(
+                    message=f"Task submission failed: {e}",
+                    stage_name=self.name,
+                )
+            )
+            self.logger.error(str(err), exc_info=self.log_exc_info)
+            self.policy.on_error(message, err, self.broker)
 
     def submit(
         self,
@@ -143,9 +205,11 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         *,
         metadata: dict | None = None,
         topic: str = "N/A",
-    ):
+    ) -> str:
         """
-        Submit raw input directly, without constructing a Message manually.
+        Convenience wrapper: submit raw input directly without constructing a Message.
+
+        Wraps *input_data* in a ``Message`` and delegates to ``submit_message``.
         """
         payload = (
             input_data if isinstance(input_data, dict) else input_data.model_dump()
@@ -238,6 +302,43 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
 
             self.policy.on_error(message, err, broker=self.broker)
 
+    def wait_all(self, timeout: float | None = None):
+        """
+        Wait for all messages in the stage queue to be processed and
+        all tasks in the task queue to complete.
+        """
+        self._stage_queue.join()
+        self.task_queue.wait_all(timeout=timeout)
+
+    def close(self, timeout=5, force: bool = False):
+        """
+        Tear down the stage.
+
+        Unless *force*, drains the stage queue and waits for all tasks to
+        finish (up to *timeout* seconds). Then signals the collector thread
+        to stop, joins it, shuts down the handler, and closes the task queue.
+
+        Args:
+            timeout: Seconds to wait for pending work. Defaults to 5.
+            force: If True, skip the graceful drain and shut down immediately.
+        """
+        if self._stop_event.is_set():
+            return
+
+        if not force:
+            try:
+                self.wait_all(timeout=timeout)
+            except Exception as e:
+                self.logger.warning(f"Graceful wait_all failed during close: {e}")
+
+        self._stop_event.set()
+        # Wake up collector if it's waiting
+        self._stage_queue.put(None)
+        if self._collector_thread.is_alive():
+            self._collector_thread.join(timeout=2.0)
+        self.handler.shutdown()
+        self.task_queue.close(force=force)
+
     def _detect_input_type(self, handler: BaseHandler) -> type[InputT] | None:
         """
         Detect Input Type with a fallback strategy:
@@ -280,10 +381,35 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         )
         return None
 
-    def close(self, force: bool = False):
-        """Cleanup stage resources"""
-        self.handler.shutdown()
-        self.task_queue.close(force=force)
+    def get_worker_task_id(self, message_id: str) -> str | None:
+        """
+        Resolve the internal task queue ID from the message ID.
+        """
+        with self._registry_lock:
+            return self._task_registry.get(message_id)
+
+    def _collector_loop(self):
+        """
+        Daemon loop that drains the stage queue and processes each message.
+        """
+        while not self._stop_event.is_set():
+            try:
+                message = self._stage_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            try:
+                if message is None:
+                    break
+
+                self._process_message(message)
+            except Exception as e:
+                self.logger.error(
+                    f"Unexpected error during processing message. Error {e}",
+                    exc_info=True,
+                )
+            finally:
+                self._stage_queue.task_done()
 
     def _enforce_input_type(self, raw_input: Any) -> InputT:
         """

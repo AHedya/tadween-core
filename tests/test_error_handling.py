@@ -1,6 +1,5 @@
 from typing import Any
 
-import pytest
 from pydantic import BaseModel
 
 from tadween_core.broker import Message
@@ -42,35 +41,53 @@ class FailingSuccessPolicy(DefaultStagePolicy[MyInput, MyOutput, Any]):
 
 
 def test_policy_resolve_error():
+    class CapturePolicy(FailingResolvePolicy):
+        def __init__(self):
+            self.last_error = None
+
+        def on_error(self, message, error, broker=None):
+            self.last_error = error
+
+    policy = CapturePolicy()
     handler = SuccessHandler()
-    stage = Stage(handler=handler, name="TestStage", policy=FailingResolvePolicy())
+    stage = Stage(handler=handler, name="TestStage", policy=policy)
 
     msg = Message(topic="test", payload={"value": 1})
 
     try:
-        with pytest.raises(PolicyError) as excinfo:
-            stage.submit_message(msg)
+        stage.submit_message(msg)
+        stage.wait_all()
 
-        assert "Policy resolution failed!" in str(excinfo.value)
-        assert "stage_name=TestStage" in str(excinfo.value)
-        assert "policy_name=FailingResolvePolicy" in str(excinfo.value)
-        assert "method=resolve_inputs" in str(excinfo.value)
+        assert isinstance(policy.last_error, PolicyError)
+        assert "Policy resolution failed!" in str(policy.last_error)
+        assert "stage_name=TestStage" in str(policy.last_error)
+        assert "policy_name=" in str(policy.last_error)
+        assert "method=resolve_inputs" in str(policy.last_error)
     finally:
         stage.close()
 
 
 def test_input_validation_error():
+    class CapturePolicy(DefaultStagePolicy):
+        def __init__(self):
+            self.last_error = None
+
+        def on_error(self, message, error, broker=None):
+            self.last_error = error
+
+    policy = CapturePolicy()
     handler = SuccessHandler()
-    stage = Stage(handler=handler, name="ValidationStage")
+    stage = Stage(handler=handler, name="ValidationStage", policy=policy)
 
     msg = Message(topic="test", payload={"wrong_key": 1})
 
     try:
-        with pytest.raises(InputValidationError) as excinfo:
-            stage.submit_message(msg)
+        stage.submit_message(msg)
+        stage.wait_all()
 
-        assert "Pydantic validation failed" in str(excinfo.value)
-        assert "stage_name=ValidationStage" in str(excinfo.value)
+        assert isinstance(policy.last_error, InputValidationError)
+        assert "Pydantic validation failed" in str(policy.last_error)
+        assert "stage_name=ValidationStage" in str(policy.last_error)
     finally:
         stage.close()
 
@@ -91,7 +108,7 @@ def test_handler_error():
 
     try:
         stage.submit_message(msg)
-        stage.task_queue.wait_all()
+        stage.wait_all()
 
     finally:
         stage.close()
@@ -116,7 +133,7 @@ def test_policy_on_success_error():
 
     try:
         stage.submit_message(msg)
-        stage.task_queue.wait_all()
+        stage.wait_all()
 
     finally:
         stage.close()

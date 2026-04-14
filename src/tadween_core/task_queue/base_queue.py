@@ -58,7 +58,7 @@ class BaseTaskQueue(ABC, Generic[T]):
         name: str | None = None,
         logger: logging.Logger | None = None,
         default_policy: type[BaseTaskPolicy] | None = None,
-        retain_results: bool = True,
+        retain_results: bool = False,
     ):
         self.name = name or f"{self.__class__.__name__}-{id(self):x}"
         self.logger = logger or logging.getLogger(f"tadween.task_queue.{self.name}")

@@ -71,7 +71,7 @@ def main():
     for i in range(1, 11):
         stage.submit({"n_elements": 1_000_000 * i}, metadata={"i": i})
     # wait until current work finishes
-    stage.task_queue.wait_all()
+    stage.wait_all()
 
     # Mimic another dependent stage. All tasks are cache-hit
     for i in range(1, 11):
