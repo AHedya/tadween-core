@@ -224,7 +224,6 @@ def test_full_e2e_workflow(
     events.clear()
     wf.submit(IngestionInput(user_id="user1", text="hello"))
     wait_for_settle()
-    print("++", events)
 
     assert "Ingestion done: art-user1" in events
     assert "Processing done: art-user1" in events
