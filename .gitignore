@@ -27,3 +27,5 @@ commit_message.md
 # local test
 .actrc
 .github/workflows/*.json 
+
+.opencode
