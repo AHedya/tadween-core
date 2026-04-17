@@ -347,10 +347,9 @@ class TestStageThrottle:
     def test_acquire_and_release_on_success(self):
         rm = ResourceManager(resources={"cuda": 1})
         done_event = threading.Event()
-        policy = (
-            StagePolicyBuilder[InputModel, OutputModel, Any, Any, Any]()
-            .with_on_done(lambda *args: done_event.set())
-        )
+        policy = StagePolicyBuilder[
+            InputModel, OutputModel, Any, Any, Any
+        ]().with_on_done(lambda *args: done_event.set())
         stage = Stage(
             handler=SuccessHandler(),
             name="ThrottledStage",
@@ -366,10 +365,9 @@ class TestStageThrottle:
     def test_release_on_handler_failure(self):
         rm = ResourceManager(resources={"cuda": 1})
         done_event = threading.Event()
-        policy = (
-            StagePolicyBuilder[InputModel, OutputModel, Any, Any, Any]()
-            .with_on_done(lambda *args: done_event.set())
-        )
+        policy = StagePolicyBuilder[
+            InputModel, OutputModel, Any, Any, Any
+        ]().with_on_done(lambda *args: done_event.set())
         stage = Stage(
             handler=FailingHandler(),
             name="ThrottledFailStage",
@@ -394,10 +392,9 @@ class TestStageThrottle:
                 results.append(inputs.value)
                 return OutputModel(result=f"tracked_{inputs.value}")
 
-        policy = (
-            StagePolicyBuilder[InputModel, OutputModel, Any, Any, Any]()
-            .with_on_done(lambda *args: done_event.set())
-        )
+        policy = StagePolicyBuilder[
+            InputModel, OutputModel, Any, Any, Any
+        ]().with_on_done(lambda *args: done_event.set())
 
         stage = Stage(
             handler=TrackingHandler(),
