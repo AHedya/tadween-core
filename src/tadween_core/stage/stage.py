@@ -13,12 +13,14 @@ from tadween_core.exceptions import (
     HandlerError,
     InputValidationError,
     PolicyError,
+    ResourceError,
     StageError,
 )
 from tadween_core.handler.base import BaseHandler
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.task_queue import BaseTaskQueue, init_queue
 from tadween_core.task_queue.base import TaskEnvelope
+from tadween_core.throttle import ResourceManager
 
 from .policy import (
     ArtifactT,
@@ -63,6 +65,8 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         task_queue: BaseTaskQueue[OutputT] | None = None,
         log_exc_info: bool = True,
         queue_size: int = 0,
+        resource_manager: ResourceManager | None = None,
+        demands: dict[str, float] | None = None,
     ):
         self.handler = handler
         self.name = name or f"Stage:{self.handler.__class__.__name__}"
@@ -73,6 +77,8 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         self.broker = broker
         self.repo = repo
         self.cache = cache
+        self.resource_manager = resource_manager
+        self.demands = demands
 
         # Introspect input type once at initialization
         self._input_model_type: type[InputT] | None = self._detect_input_type(handler)
@@ -175,7 +181,17 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             self.policy.on_error(message, err, self.broker)
             return
 
-        # step4: enqueue
+        # step4: acquire throttle
+        if self.resource_manager and self.demands:
+            try:
+                self.resource_manager.acquire(self.demands)
+            except ResourceError:
+                self.logger.warning(
+                    f"Resource acquisition aborted (manager shutdown) for message {message.id}"
+                )
+                return
+
+        # step5: enqueue
         try:
             callback = functools.partial(self._on_task_done, message)
             # FIXME: `on_running` is currently disabled. Reason: not stable with process task queue.
@@ -188,6 +204,8 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             with self._registry_lock:
                 self._task_registry[message.id] = task_id
         except Exception as e:
+            if self.resource_manager and self.demands:
+                self.resource_manager.release(self.demands)
             err = (
                 e
                 if isinstance(e, StageError)
@@ -242,6 +260,9 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             self.logger.critical(str(err), exc_info=self.log_exc_info)
             self.policy.on_error(message, err, broker=self.broker)
             return
+        finally:
+            if self.resource_manager and self.demands:
+                self.resource_manager.release(self.demands)
 
         message.metadata.update({"current_stage": self.name})
 

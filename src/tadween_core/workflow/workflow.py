@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 
+from tadween_core import ResourceManager
 from tadween_core.broker import BaseMessageBroker, Message
 from tadween_core.cache.base import BaseCache
 from tadween_core.exceptions import StageError
@@ -36,6 +37,7 @@ class Workflow:
         life_length: float | None = None,
         logger: Logger | None = None,
         default_payload_extractor: Callable[[Any | None], dict] | None = None,
+        resources: dict[str, float] | None = None,
     ):
         """
         Args:
@@ -44,7 +46,10 @@ class Workflow:
             cache: Singleton cache instance.
             repo: Singleton repository instance.
             life_length: Time in seconds before the workflow is forcibly killed.
-            None means infinite life.
+                None means infinite life.
+            resources: Global resource pool (e.g. ``{"cuda": 1, "RAM_MB": 2048}``).
+                Stages declare *demands* against these resources; the manager
+                ensures no more than the configured capacity is allocated at once.
         """
         self.broker = broker
         self.name = name or f"Workflow-{id(self):x}"
@@ -53,6 +58,7 @@ class Workflow:
         self.life_length = life_length
         self.logger = logger or getLogger(f"tadween.workflow.{self.name}")
         self.payload_extractor = default_payload_extractor
+        self.resource_manager = ResourceManager(resources) if resources else None
 
         self._stages: dict[str, Stage] = {}
         # Adjacency list: source_stage -> [target_stages]
@@ -75,6 +81,7 @@ class Workflow:
         cache: BaseCache | None = None,
         repo: BaseArtifactRepo | None = None,
         task_queue: BaseTaskQueue | None = None,
+        demands: dict[str, float] | None = None,
     ) -> "Workflow":
         """
         Builds a Stage from components and integrates it into the workflow.
@@ -86,7 +93,7 @@ class Workflow:
             )
 
         if isinstance(handler, HandlerFactory):
-            handler_instance = handler.create_and_warmup()
+            handler_instance = handler.create()
         else:
             handler_instance = handler
 
@@ -98,6 +105,8 @@ class Workflow:
             repo=repo or self.repo,
             cache=cache or self.cache,
             task_queue=task_queue,
+            resource_manager=self.resource_manager,
+            demands=demands,
         )
 
         return self.integrate_stage(name, stage)
@@ -196,6 +205,26 @@ class Workflow:
 
         return False
 
+    def _validate_resource_demands(self) -> None:
+        if not self.resource_manager:
+            return
+
+        capacity = self.resource_manager.capacity
+        for stage_name, stage in self._stages.items():
+            if not stage.demands:
+                continue
+            for resource, units in stage.demands.items():
+                if resource not in capacity:
+                    raise ValueError(
+                        f"Stage '{stage_name}' demands unknown resource '{resource}'. "
+                        f"Available resources: {list(capacity.keys())}."
+                    )
+                if units > capacity[resource]:
+                    raise ValueError(
+                        f"Stage '{stage_name}' demands {units} {resource} "
+                        f"but only {capacity[resource]} available."
+                    )
+
     def set_entry_point(self, stage_name: str, topic: str | None = None) -> "Workflow":
         """
         Defines the entry point of the workflow.
@@ -221,14 +250,18 @@ class Workflow:
     def build(self):
         """
         Finalizes the workflow:
-        1. Generates topics.
-        2. Updates RoutingPolicies.
-        3. Subscribes stages to brokers.
-        4. Starts the lifecycle timer.
+        1. Validates resource demands.
+        2. Generates topics.
+        3. Updates RoutingPolicies.
+        4. Subscribes stages to brokers.
+        5. Starts the lifecycle timer.
         """
         if self._is_built:
             return
         self._is_built = True
+
+        # Validate resource demands
+        self._validate_resource_demands()
 
         # Wire internal links
         for src, targets in self._adjacency_list.items():
@@ -335,6 +368,9 @@ class Workflow:
         if hasattr(self.broker, "close"):
             # If InMemoryBroker, it's fine. If shared RabbitMQ connection, be careful.
             self.broker.close(timeout=timeout, force=force)
+
+        if self.resource_manager and not self.resource_manager.is_shutdown:
+            self.resource_manager.shutdown()
 
         for stage in self._stages.values():
             stage.close(force=force)

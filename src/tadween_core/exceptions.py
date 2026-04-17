@@ -74,3 +74,17 @@ class RepoError(TadweenError):
 class S3InitError(RepoError):
     def __init__(self, message: str, **context: Any):
         super().__init__(message, **context)
+
+
+class ResourceError(TadweenError):
+    """Errors occurring in resource management."""
+
+    def __init__(self, message: str, **context: Any):
+        super().__init__(message, **context)
+
+
+class ResourceAcquireTimeout(ResourceError):
+    """Timeout while waiting for resources to become available."""
+
+    def __init__(self, message: str, **context: Any):
+        super().__init__(message, **context)

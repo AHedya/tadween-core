@@ -1,9 +1,11 @@
+import threading
 import time
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
+from tadween_core import ResourceManager
 from tadween_core.broker import Message
 from tadween_core.exceptions import InputValidationError
 from tadween_core.handler.base import BaseHandler
@@ -339,3 +341,85 @@ class TestStageInputTypeDetection:
         stage = create_stage(AnnotatedHandler())
 
         assert stage._input_model_type is InputModel
+
+
+class TestStageThrottle:
+    def test_acquire_and_release_on_success(self):
+        rm = ResourceManager(resources={"cuda": 1})
+        done_event = threading.Event()
+        policy = (
+            StagePolicyBuilder[InputModel, OutputModel, Any, Any, Any]()
+            .with_on_done(lambda *args: done_event.set())
+        )
+        stage = Stage(
+            handler=SuccessHandler(),
+            name="ThrottledStage",
+            policy=policy,
+            resource_manager=rm,
+            demands={"cuda": 1},
+        )
+        stage.submit({"value": 1})
+        assert done_event.wait(timeout=5)
+        assert rm.available == {"cuda": 1}
+        stage.close()
+
+    def test_release_on_handler_failure(self):
+        rm = ResourceManager(resources={"cuda": 1})
+        done_event = threading.Event()
+        policy = (
+            StagePolicyBuilder[InputModel, OutputModel, Any, Any, Any]()
+            .with_on_done(lambda *args: done_event.set())
+        )
+        stage = Stage(
+            handler=FailingHandler(),
+            name="ThrottledFailStage",
+            policy=policy,
+            resource_manager=rm,
+            demands={"cuda": 1},
+        )
+        stage.submit({"value": 1})
+        assert done_event.wait(timeout=5)
+        assert rm.available == {"cuda": 1}
+        stage.close()
+
+    def test_throttle_blocks_when_resource_unavailable(self):
+        rm = ResourceManager(resources={"cuda": 1})
+        rm.acquire({"cuda": 1})
+
+        results = []
+        done_event = threading.Event()
+
+        class TrackingHandler(BaseHandler[InputModel, OutputModel]):
+            def run(self, inputs: InputModel) -> OutputModel:
+                results.append(inputs.value)
+                return OutputModel(result=f"tracked_{inputs.value}")
+
+        policy = (
+            StagePolicyBuilder[InputModel, OutputModel, Any, Any, Any]()
+            .with_on_done(lambda *args: done_event.set())
+        )
+
+        stage = Stage(
+            handler=TrackingHandler(),
+            name="BlockedStage",
+            policy=policy,
+            resource_manager=rm,
+            demands={"cuda": 1},
+        )
+        stage.submit({"value": 42})
+
+        time.sleep(0.2)
+        assert len(results) == 0
+
+        rm.release({"cuda": 1})
+        assert done_event.wait(timeout=5)
+        assert len(results) == 1
+        assert results[0] == 42
+        assert rm.available == {"cuda": 1}
+        stage.close()
+
+    def test_no_resource_manager(self):
+        stage = Stage(handler=SuccessHandler(), name="UnThrottledStage")
+        stage.submit({"value": 1})
+        stage.wait_all(timeout=5)
+        stage.close()
