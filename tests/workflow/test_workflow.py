@@ -352,3 +352,12 @@ class TestWorkflowLifeLength:
             assert workflow._timer is not None
         finally:
             workflow.close()
+
+    def test_close_shutdowns_resource_manager(self, inmemory_broker):
+        workflow = Workflow(broker=inmemory_broker, resources={"cuda": 1})
+        workflow.add_stage("a", handler=SimpleHandler(), demands={"cuda": 1})
+        workflow.set_entry_point("a")
+        workflow.build()
+        workflow.close()
+
+        assert workflow.resource_manager.is_shutdown

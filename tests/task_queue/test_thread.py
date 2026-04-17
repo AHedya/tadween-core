@@ -23,15 +23,24 @@ class TestThreadTaskQueue(TaskQueueContract):
     def pipe(self):
         return Queue()
 
-    def test_cancel_pending_task(self, event):
+    def test_cancel_pending_task(self):
+        started = threading.Event()
+        blocker = threading.Event()
         tq = ThreadTaskQueue(name="CancelQueue", max_workers=1, retain_results=True)
         try:
-            task_id1 = tq.submit(conditional_slow_task, event=event, duration=0.2)
+            task_id1 = tq.submit(
+                conditional_slow_task,
+                event=blocker,
+                duration=0.2,
+                on_running=lambda tid: started.set(),
+            )
             task_id2 = tq.submit(slow_task, duration=5.0)
+
+            assert started.wait(timeout=5.0), "task_id1 did not start running"
 
             result1 = tq.cancel(task_id1)
             result2 = tq.cancel(task_id2)
-            event.set()
+            blocker.set()
 
             assert not result1
             assert result2

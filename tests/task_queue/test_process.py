@@ -1,3 +1,4 @@
+import functools
 import multiprocessing
 import os
 
@@ -5,7 +6,7 @@ import pytest
 
 from tadween_core.task_queue import ProcessTaskQueue
 
-from .shared import conditional_slow_task, fast_task, slow_task  # noqa
+from .shared import conditional_slow_task, fast_task, slow_task
 from .test_contract import TaskQueueContract
 
 
@@ -16,6 +17,11 @@ def _get_process_id():
 
 
 def init_func(event):
+    event.set()
+
+
+def running_signal(_task_id, event):
+    """Module-level on_running callback that sets an event."""
     event.set()
 
 
@@ -39,21 +45,27 @@ class TestProcessTaskQueue(TaskQueueContract):
         return multiprocessing.get_context("spawn").Queue()
 
     def test_cancel_pending_task(self):
-        # This event goes to the child process (worker). Needs to be shareable
         m = multiprocessing.get_context("spawn").Manager()
-        event = m.Event()
+        started = m.Event()
+        blocker = m.Event()
 
         pq = ProcessTaskQueue(name="CancelQueue", max_workers=1, retain_results=True)
         try:
-            task_id1 = pq.submit(conditional_slow_task, event=event, duration=0.5)
-            # overwhelm
+            task_id1 = pq.submit(
+                conditional_slow_task,
+                event=blocker,
+                duration=0.5,
+                on_running=functools.partial(running_signal, event=started),
+            )
             pq.submit(slow_task, duration=0.2)
             pq.submit(slow_task, duration=0.2)
             task_id2 = pq.submit(slow_task, duration=5.0)
 
+            assert started.wait(timeout=5.0), "task_id1 did not start running"
+
             result1 = pq.cancel(task_id1)
             result2 = pq.cancel(task_id2)
-            event.set()
+            blocker.set()
 
             assert not result1
             assert result2

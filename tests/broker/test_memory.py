@@ -1,5 +1,4 @@
 import queue
-import threading
 import time
 
 import pytest
@@ -53,19 +52,18 @@ def test_message_id_generation(broker: InMemoryBroker):
     assert len(set(ids)) == 3
 
 
-@pytest.mark.xfail(reason="timeouts unexpectedly")
 def test_one_to_one(broker: InMemoryBroker):
-    # Can't reliably test with assertions in multi-threaded without using synchronization
-    event = threading.Event()
+    received = queue.Queue()
 
     def handler(msg: Message):
         if msg.payload:
-            event.set()
+            received.put(msg)
 
     broker.subscribe("test.topic", handler)
     broker.publish(Message(topic="test.topic", payload={"data": "hello"}))
 
-    assert event.wait(timeout=8), "Message not received within timeout"
+    msg = received.get(timeout=1.0)
+    assert msg.payload["data"] == "hello"
 
 
 def test_one_to_many(broker: InMemoryBroker):
@@ -95,9 +93,8 @@ def test_one_to_many(broker: InMemoryBroker):
     )
 
 
-@pytest.mark.xfail(reason="Flaky due to thread scheduling", strict=False)
 def test_subscription_chain(broker: InMemoryBroker):
-    event = threading.Event()
+    received = queue.Queue()
 
     def make_handler(next_topic):
         def handler(_: Message):
@@ -108,13 +105,13 @@ def test_subscription_chain(broker: InMemoryBroker):
     for i in range(0, 5):
         topic = f"test.{i}"
         next_topic = f"test.{i + 1}"
-        # perform chain effect
         broker.subscribe(topic, make_handler(next_topic))
 
-    broker.subscribe(next_topic, lambda x: event.set())
+    broker.subscribe("test.5", lambda m: received.put(m))
     broker.publish(Message(topic="test.0"))
 
-    assert event.wait(timeout=5), "didn't chain"
+    msg = received.get(timeout=2.0)
+    assert msg.topic == "test.5"
 
 
 def test_subscription_chain_with_sideeffect(broker: InMemoryBroker):

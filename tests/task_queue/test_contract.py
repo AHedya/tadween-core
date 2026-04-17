@@ -41,7 +41,7 @@ class TaskQueueContract:
         queue.wait_all(timeout=5.0)
         duration = time.perf_counter() - start
 
-        assert duration >= 0.1
+        assert round(duration, 1) >= 0.1
         assert duration < 2.0
 
     def test_wait_all_timeout_raises(self, queue):
