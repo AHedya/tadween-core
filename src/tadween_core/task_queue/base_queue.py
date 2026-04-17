@@ -103,7 +103,8 @@ class BaseTaskQueue(ABC, Generic[T]):
             def _done_callback(future):
                 on_done(task_id, future)
                 if not retain_result:
-                    self._tasks.pop(task_id, None)
+                    with self._lock:
+                        self._tasks.pop(task_id, None)
 
             future.add_done_callback(_done_callback)
             return task_id
@@ -116,10 +117,10 @@ class BaseTaskQueue(ABC, Generic[T]):
             if task_id not in self._tasks:
                 raise ValueError(f"Unknown task ID: {task_id}")
             future = self._tasks[task_id]
-        if future.cancelled():
-            return TaskStatus.CANCELLED
-        if not future.done():
-            return TaskStatus.RUNNING
+            if future.cancelled():
+                return TaskStatus.CANCELLED
+            if not future.done():
+                return TaskStatus.RUNNING
         try:
             envelope: TaskEnvelope = future.result()
             return TaskStatus.COMPLETED if envelope.success else TaskStatus.FAILED
@@ -167,7 +168,7 @@ class BaseTaskQueue(ABC, Generic[T]):
                 yield task_id, system_error
             finally:
                 with self._lock:
-                    del self._tasks[task_id]
+                    self._tasks.pop(task_id, None)
 
     def cancel(self, task_id: str) -> bool:
         """Attempt to cancel a task"""
@@ -210,12 +211,15 @@ class BaseTaskQueue(ABC, Generic[T]):
         finally:
             if consume:
                 with self._lock:
-                    del self._tasks[task_id]
+                    self._tasks.pop(task_id, None)
 
     def wait_all(self, timeout: float | None = None):
         """Hangs the main process until all tasks in the queue are done."""
         with self._lock:
             pending = set(self._tasks.values())
+
+        if not pending:
+            return
 
         start_time = time.perf_counter()
 
@@ -224,12 +228,33 @@ class BaseTaskQueue(ABC, Generic[T]):
             if timeout is not None:
                 rem_timeout = timeout - (time.perf_counter() - start_time)
                 if rem_timeout <= 0:
-                    raise TimeoutError("Task queue timed out")
+                    raise TimeoutError(
+                        f"Task queue [{self.name}] timed out waiting for futures"
+                    )
 
             done, pending = wait(
                 pending, return_when=FIRST_COMPLETED, timeout=rem_timeout
             )
             done.clear()
+
+        # Wait for cleanup (pop from _tasks in _done_callback)
+        # ONLY if results are NOT retained. If they ARE retained, they will never be popped.
+        if not self.retain_results:
+            while True:
+                with self._lock:
+                    if not self._tasks:
+                        break
+
+                if timeout is not None:
+                    remaining = (start_time + timeout) - time.perf_counter()
+                    if remaining <= 0:
+                        with self._lock:
+                            if not self._tasks:
+                                break
+                        raise TimeoutError(
+                            f"Task queue [{self.name}] timed out during cleanup"
+                        )
+                time.sleep(0.01)
 
     @abstractmethod
     def close(self, force: bool = False) -> None:
