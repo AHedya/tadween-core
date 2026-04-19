@@ -109,7 +109,7 @@ class TestProcessTaskQueue(TaskQueueContract):
 
 class TestRetainResults:
     def test_retain_results_false_cleans_up(self):
-        pq = ProcessTaskQueue(name="NoRetainQueue", max_workers=2, retain_results=False)
+        pq = ProcessTaskQueue(name="NoRetainQueue", max_workers=1, retain_results=False)
         try:
             task_id = pq.submit(fast_task, x=5)
             pq.wait_all()
@@ -118,7 +118,7 @@ class TestRetainResults:
             pq.close()
 
     def test_per_task_retain_override(self):
-        pq = ProcessTaskQueue(name="RetainQueue", max_workers=2, retain_results=True)
+        pq = ProcessTaskQueue(name="RetainQueue", max_workers=1, retain_results=True)
         try:
             task_id = pq.submit(fast_task, x=5, retain_result=False)
             pq.wait_all()

@@ -1,8 +1,8 @@
 import logging
 from importlib.metadata import PackageNotFoundError, version
 
+from .coord import ResourceManager, StageContextConfig, WorkflowContext
 from .logger import ProcessQueueLogger, QueueLogger, StandardLogger, set_logger
-from .throttle import ResourceManager
 
 logger = logging.getLogger("tadween")
 logger.addHandler(logging.NullHandler())
@@ -20,5 +20,7 @@ __all__ = [
     "ProcessQueueLogger",
     "set_logger",
     "ResourceManager",
+    "WorkflowContext",
+    "StageContextConfig",
     "__version__",
 ]

@@ -78,4 +78,5 @@ class SimpleCache(BaseCache[BucketSchemaT]):
         return key in self._store
 
     def __len__(self) -> int:
-        return len(self._store)
+        with self._lock:
+            return len(self._store)

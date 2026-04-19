@@ -1,6 +1,6 @@
 import threading
 
-from .exceptions import ResourceError
+from tadween_core.exceptions import ResourceError
 
 
 class ResourceManager:
@@ -13,8 +13,8 @@ class ResourceManager:
     collector thread) until all demanded units are available atomically;
     ``release`` returns them to the pool.
 
-    Typical usage::
-
+    Typical usage:
+    ```python
         manager = ResourceManager(resources={"cuda": 1, "RAM_MB": 2048})
 
         # Inside the collector thread, before submitting to the task queue:
@@ -22,6 +22,7 @@ class ResourceManager:
 
         # Inside the on_done callback, after the task finishes:
         manager.release({"cuda": 1})
+    ```
     """
 
     def __init__(self, resources: dict[str, float]):
@@ -43,13 +44,6 @@ class ResourceManager:
     def acquire(self, demands: dict[str, float]) -> None:
         """
         Block until *all* demanded resources are available, then reserve them.
-
-        The reservation is atomic: either every resource is acquired or the
-        caller waits.  This prevents partial allocation (e.g. holding RAM while
-        waiting for CUDA) that could cause deadlocks.
-
-        Args:
-            demands: Mapping of resource name → units required.
 
         Raises:
             ResourceError: If the manager has been shut down.
@@ -77,10 +71,6 @@ class ResourceManager:
         """
         Return previously acquired units to the pool and wake waiting threads.
 
-        Args:
-            demands: Mapping of resource name → units to return.  Must match
-                    a prior ``acquire`` call.
-
         Raises:
             ValueError: If a resource is unknown or release would exceed capacity.
         """
@@ -101,47 +91,39 @@ class ResourceManager:
     def shutdown(self) -> None:
         """
         Signal shutdown and wake all waiting threads.
-
-        Waiting ``acquire`` calls will raise ``ResourceError``.
         """
         with self._condition:
             self._is_shutdown = True
             self._condition.notify_all()
 
     @property
-    def available(self) -> dict[str, float]:
-        """Snapshot of currently available units per resource."""
-        with self._lock:
-            return dict(self._available)
+    def is_shutdown(self) -> bool:
+        return self._is_shutdown
 
     @property
     def capacity(self) -> dict[str, float]:
-        """Snapshot of total capacity per resource."""
         return dict(self._capacity)
 
     @property
-    def is_shutdown(self) -> bool:
-        return self._is_shutdown
+    def available(self) -> dict[str, float]:
+        with self._condition:
+            return dict(self._available)
+
+    def _validate_demands(self, demands: dict[str, float]) -> None:
+        for name, units in demands.items():
+            if name not in self._capacity:
+                raise ValueError(f"Unknown resource: {name}")
+            if units > self._capacity[name]:
+                raise ValueError(
+                    f"Demand for '{name}' ({units}) exceeds total capacity ({self._capacity[name]})."
+                )
+            if units <= 0:
+                raise ValueError(
+                    f"Resource '{name}' units must be positive, got {units}."
+                )
 
     def _can_acquire(self, demands: dict[str, float]) -> bool:
         for name, units in demands.items():
             if self._available[name] < units:
                 return False
         return True
-
-    def _validate_demands(self, demands: dict[str, float]) -> None:
-        if not demands:
-            return
-
-        for name, units in demands.items():
-            if name not in self._capacity:
-                raise ValueError(
-                    f"Unknown resource '{name}'. "
-                    f"Available resources: {list(self._capacity.keys())}."
-                )
-            if units <= 0:
-                raise ValueError(f"Demand for '{name}' must be positive, got {units}.")
-            if units > self._capacity[name]:
-                raise ValueError(
-                    f"Demand for '{name}' ({units}) exceeds total capacity ({self._capacity[name]})."
-                )

@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from tadween_core import ResourceManager
+from tadween_core import ResourceManager, StageContextConfig, WorkflowContext
 from tadween_core.broker import Message
 from tadween_core.exceptions import InputValidationError
 from tadween_core.handler.base import BaseHandler
@@ -419,4 +419,197 @@ class TestStageThrottle:
         stage = Stage(handler=SuccessHandler(), name="UnThrottledStage")
         stage.submit({"value": 1})
         stage.wait_all(timeout=5)
+        stage.close()
+
+
+class FailingResolvePolicy(DefaultStagePolicy[InputModel, OutputModel, Any, Any, Any]):
+    def resolve_inputs(self, message, repo=None, cache=None):
+        raise ValueError("Resolve failure!")
+
+
+class TestStageCoordination:
+    def test_logical_deferral_timeout_no_rollback(self):
+        ctx = WorkflowContext()
+        errors = []
+
+        class ErrorPolicy(DefaultStagePolicy):
+            def on_error(self, message, error, broker=None):
+                errors.append(error)
+
+        # Predicate always returns True (blocks forever)
+        stage = Stage(
+            handler=SuccessHandler(),
+            context_config=StageContextConfig(
+                context=ctx,
+                defer_predicate=lambda _: True,
+                defer_timeout=0.1,
+                defer_poll_interval=0.1,
+                defer_state_update={"count": 1},
+            ),
+            policy=ErrorPolicy(),
+        )
+
+        stage.submit({"value": 1})
+
+        # Wait for on_error to be called
+        start = time.monotonic()
+        while not errors and time.monotonic() - start < 10.0:
+            time.sleep(0.05)
+
+        assert len(errors) == 1
+        assert "timeout" in str(errors[0]).lower()
+
+        # Count should be 0 because wait_for timed out before applying state update
+        assert ctx.state_get("count") == 0
+        stage.close()
+
+    def test_physical_resource_release_on_process_failure(self):
+        rm = ResourceManager(resources={"cuda": 1})
+        errors = []
+
+        class ErrorPolicy(FailingResolvePolicy):
+            def on_error(self, message, error, broker=None):
+                errors.append(error)
+
+        stage = Stage(
+            handler=SuccessHandler(),
+            resource_manager=rm,
+            demands={"cuda": 1},
+            policy=ErrorPolicy(),
+        )
+
+        stage.submit({"value": 1})
+
+        # Wait for on_error
+        start = time.monotonic()
+        while not errors and time.monotonic() - start < 10.0:
+            time.sleep(0.05)
+
+        assert len(errors) == 1
+        assert "Resolve failure!" in str(errors[0])
+
+        # Resources should be released even if process_message failed
+        assert rm.available == {"cuda": 1}
+        stage.close()
+
+    def test_rollback_logical_on_resource_acquisition_failure(self):
+        rm = ResourceManager(resources={"cuda": 1})
+        ctx = WorkflowContext()
+
+        # Block RM
+        rm.acquire({"cuda": 1})
+
+        stage = Stage(
+            handler=SuccessHandler(),
+            resource_manager=rm,
+            demands={"cuda": 1},
+            context_config=StageContextConfig(
+                context=ctx,
+                defer_predicate=lambda _: False,  # Pass immediately
+                defer_state_update={"count": 1},
+            ),
+        )
+
+        stage.submit({"value": 1})
+
+        # Give time to pass wait_for and block on RM.acquire
+        time.sleep(0.2)
+        assert ctx.state_get("count") == 1
+
+        # Shutdown RM to trigger ResourceError in Stage
+        rm.shutdown()
+
+        # Give time for Stage to catch exception and rollback
+        time.sleep(0.1)
+
+        # Should be rolled back to 0
+        assert ctx.state_get("count") == 0
+        stage.close()
+
+    def test_rollback_logical_on_process_failure(self):
+        ctx = WorkflowContext()
+
+        class ErrorPolicy(FailingResolvePolicy):
+            pass
+
+        stage = Stage(
+            handler=SuccessHandler(),
+            policy=ErrorPolicy(),
+            context_config=StageContextConfig(
+                context=ctx,
+                defer_predicate=lambda _: False,
+                defer_state_update={"count": 1},
+            ),
+        )
+
+        stage.submit({"value": 1})
+
+        # Give time to process and fail
+        time.sleep(0.1)
+
+        # Should be rolled back to 0
+        assert ctx.state_get("count") == 0
+        stage.close()
+
+    def test_no_logical_rollback_if_no_predicate(self):
+        ctx = WorkflowContext()
+
+        class ErrorPolicy(FailingResolvePolicy):
+            pass
+
+        stage = Stage(
+            handler=SuccessHandler(),
+            policy=ErrorPolicy(),
+            context_config=StageContextConfig(
+                context=ctx,
+                defer_predicate=None,  # No predicate, so wait_for not called
+                defer_state_update={"count": 1},
+            ),
+        )
+
+        stage.submit({"value": 1})
+
+        # Give time to process and fail
+        time.sleep(0.1)
+
+        # Should remain 0, NOT -1
+        assert ctx.state_get("count") == 0
+        stage.close()
+
+    def test_logical_state_balance_on_critical_failure(self):
+        ctx = WorkflowContext()
+        from concurrent.futures import Future
+
+        class CriticalFailureTaskQueue:
+            def submit(self, fn, on_done, inputs=None, metadata=None):
+                f = Future()
+                f.set_exception(RuntimeError("Critical worker failure"))
+                # Manually trigger callback like TaskQueue would
+                on_done("task_id", f)
+                return "task_id"
+
+            def wait_all(self, timeout=None):
+                pass
+
+            def close(self, force=False):
+                pass
+
+        stage = Stage(
+            handler=SuccessHandler(),
+            task_queue=CriticalFailureTaskQueue(),
+            context_config=StageContextConfig(
+                context=ctx,
+                defer_predicate=lambda _: False,
+                defer_state_update={"count": 1},
+                done_state_update={"count": -1},
+            ),
+        )
+
+        stage.submit({"value": 1})
+
+        # Give time for callback to run
+        time.sleep(0.1)
+
+        # Should be 0
+        assert ctx.state_get("count") == 0
         stage.close()

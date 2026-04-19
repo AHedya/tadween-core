@@ -46,8 +46,8 @@ class WorkflowRoutingPolicy(
         # Default: no payload passing
         # If returns:
         # None  -> propagate message payload
-        # `x`   -> context payload
         # {}    -> No payload passing
+        # This semantic is used in `Message.fork`.
         self._payload_extractor = payload_extractor or (lambda x: {})
 
     def resolve_inputs(self, message, repo=None, cache=None):

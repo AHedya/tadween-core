@@ -7,9 +7,13 @@ from typing import Any, Literal
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 
-from tadween_core import ResourceManager
 from tadween_core.broker import BaseMessageBroker, Message
 from tadween_core.cache.base import BaseCache
+from tadween_core.coord import (
+    ResourceManager,
+    StageContextConfig,
+    WorkflowContext,
+)
 from tadween_core.exceptions import StageError
 from tadween_core.handler import BaseHandler, HandlerFactory, InputT, OutputT
 from tadween_core.repo.base import BaseArtifactRepo
@@ -38,6 +42,7 @@ class Workflow:
         logger: Logger | None = None,
         default_payload_extractor: Callable[[Any | None], dict] | None = None,
         resources: dict[str, float] | None = None,
+        context: WorkflowContext | None = None,
     ):
         """
         Args:
@@ -59,6 +64,7 @@ class Workflow:
         self.logger = logger or getLogger(f"tadween.workflow.{self.name}")
         self.payload_extractor = default_payload_extractor
         self.resource_manager = ResourceManager(resources) if resources else None
+        self.context = context or WorkflowContext()
 
         self._stages: dict[str, Stage] = {}
         # Adjacency list: source_stage -> [target_stages]
@@ -82,6 +88,9 @@ class Workflow:
         repo: BaseArtifactRepo | None = None,
         task_queue: BaseTaskQueue | None = None,
         demands: dict[str, float] | None = None,
+        context_config: StageContextConfig | None = None,
+        queue_size: int = 0,
+        log_exc_info: bool = True,
     ) -> "Workflow":
         """
         Builds a Stage from components and integrates it into the workflow.
@@ -107,6 +116,9 @@ class Workflow:
             task_queue=task_queue,
             resource_manager=self.resource_manager,
             demands=demands,
+            context_config=context_config,
+            queue_size=queue_size,
+            log_exc_info=log_exc_info,
         )
 
         return self.integrate_stage(name, stage)
@@ -125,6 +137,8 @@ class Workflow:
 
         if not stage.cache:
             stage.cache = self.cache
+
+        stage.context_config.context = self.context
 
         # Wrap the user's policy with our RoutingPolicy to handle transport
         # We initialize with empty topics; they will be populated during `build()`

@@ -9,6 +9,11 @@ from pydantic import BaseModel, ValidationError
 
 from tadween_core.broker import BaseMessageBroker, Message
 from tadween_core.cache.base import BaseCache
+from tadween_core.coord import (
+    ResourceManager,
+    StageContextConfig,
+    WorkflowContext,
+)
 from tadween_core.exceptions import (
     HandlerError,
     InputValidationError,
@@ -20,7 +25,6 @@ from tadween_core.handler.base import BaseHandler
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.task_queue import BaseTaskQueue, init_queue
 from tadween_core.task_queue.base import TaskEnvelope
-from tadween_core.throttle import ResourceManager
 
 from .policy import (
     ArtifactT,
@@ -67,6 +71,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         queue_size: int = 0,
         resource_manager: ResourceManager | None = None,
         demands: dict[str, float] | None = None,
+        context_config: StageContextConfig | None = None,
     ):
         self.handler = handler
         self.name = name or f"Stage:{self.handler.__class__.__name__}"
@@ -79,6 +84,10 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         self.cache = cache
         self.resource_manager = resource_manager
         self.demands = demands
+
+        self.context_config = context_config or StageContextConfig()
+        if not self.context_config.context:
+            self.context_config.context = WorkflowContext()
 
         # Introspect input type once at initialization
         self._input_model_type: type[InputT] | None = self._detect_input_type(handler)
@@ -120,7 +129,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
 
         return message.id
 
-    def _process_message(self, message: Message) -> None:
+    def _process_message(self, message: Message) -> bool:
         """
         Flow:
         1. Policy decides whether to PROCESS, SKIP, or CANCEL (on_submitted).
@@ -130,7 +139,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         5. Callback triggers Policy success/failure hooks.
 
         Returns:
-            None
+            bool: True if task was enqueued, False otherwise.
         """
 
         # step 1: intercept
@@ -147,10 +156,10 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                 f"Policy failed to intercept: {err}", exc_info=self.log_exc_info
             )
             self.policy.on_error(message, err, self.broker)
-            return
+            return False
         if context and context.intercepted:
             self.logger.info(f"Intercepted. Reason: {context.reason}")
-            return
+            return False
 
         # Step 2: resolve inputs
         try:
@@ -166,32 +175,21 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             )
             self.logger.error(f"Policy failed to resolve inputs: {err}", exc_info=True)
             self.policy.on_error(message, err, self.broker)
-            return
+            return False
 
         # step 3: validate
         try:
             input_data: InputT = self._enforce_input_type(raw_input)
         except Exception as e:
-            # If it's already a StageError (from _enforce_input_type), re-raise and notify
             err = (
                 e
                 if isinstance(e, StageError)
                 else InputValidationError(str(e), stage_name=self.name)
             )
             self.policy.on_error(message, err, self.broker)
-            return
+            return False
 
-        # step4: acquire throttle
-        if self.resource_manager and self.demands:
-            try:
-                self.resource_manager.acquire(self.demands)
-            except ResourceError:
-                self.logger.warning(
-                    f"Resource acquisition aborted (manager shutdown) for message {message.id}"
-                )
-                return
-
-        # step5: enqueue
+        # step 4: enqueue
         try:
             callback = functools.partial(self._on_task_done, message)
             # FIXME: `on_running` is currently disabled. Reason: not stable with process task queue.
@@ -203,9 +201,8 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             )
             with self._registry_lock:
                 self._task_registry[message.id] = task_id
+            return True
         except Exception as e:
-            if self.resource_manager and self.demands:
-                self.resource_manager.release(self.demands)
             err = (
                 e
                 if isinstance(e, StageError)
@@ -216,6 +213,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             )
             self.logger.error(str(err), exc_info=self.log_exc_info)
             self.policy.on_error(message, err, self.broker)
+            return False
 
     def submit(
         self,
@@ -263,6 +261,16 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         finally:
             if self.resource_manager and self.demands:
                 self.resource_manager.release(self.demands)
+            if self.context_config.context:
+                if self.context_config.done_state_update:
+                    self.context_config.context.apply_state(
+                        self.context_config.done_state_update
+                    )
+                if self.context_config.notify_events:
+                    self.context_config.context.notify(
+                        self.context_config.notify_events,
+                        n=self.context_config.n_notify,
+                    )
 
         message.metadata.update({"current_stage": self.name})
 
@@ -412,6 +420,14 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
     def _collector_loop(self):
         """
         Daemon loop that drains the stage queue and processes each message.
+
+        Coordination lifecycle (per message):
+
+        1. **Logical backpressure**: block until the deferral predicate clears.
+        2. **Physical backpressure**: acquire physical resources via ResourceManager.
+        3. **Process**: run the policy lifecycle (intercept -> resolve -> validate -> enqueue).
+        4. **Release on done**: Release both physical acquisition, and the logical claim.
+        5. **Rollback on failure**: if enqueuing fails, roll back both the logical claim and the physical acquisition.
         """
         while not self._stop_event.is_set():
             try:
@@ -423,7 +439,61 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                 if message is None:
                     break
 
-                self._process_message(message)
+                # Logical Backpressure (Deferral)
+                logical_acquired = False
+                if self.context_config.defer_predicate and self.context_config.context:
+                    try:
+                        self.context_config.context.wait_for(
+                            event_name=self.context_config.defer_event,
+                            predicate=self.context_config.defer_predicate,
+                            poll_interval=self.context_config.defer_poll_interval,
+                            timeout=self.context_config.defer_timeout,
+                            update_on_acquire=self.context_config.defer_state_update,
+                        )
+                        logical_acquired = True
+                    except TimeoutError as e:
+                        self.logger.warning(
+                            f"Message {message.id} deferred too long: {e}"
+                        )
+                        self.policy.on_error(
+                            message, StageError(str(e), self.name), self.broker
+                        )
+                        continue
+
+                enqueued = False
+                physical_acquired = False
+                try:
+                    # Physical Backpressure (Resource Management)
+                    if self.resource_manager and self.demands:
+                        try:
+                            self.resource_manager.acquire(self.demands)
+                            physical_acquired = True
+                        except ResourceError:
+                            self.logger.warning(
+                                f"Resource acquisition aborted (manager shutdown) for message {message.id}"
+                            )
+                            # Implicitly triggers rollback of Step 1 in 'finally' block
+                            continue
+
+                    # Process and Enqueue
+                    enqueued = self._process_message(message)
+                finally:
+                    if not enqueued:
+                        # Release physical resources if they were acquired but enqueuing failed
+                        if physical_acquired:
+                            self.resource_manager.release(self.demands)
+
+                        # Rollback logical state changes if any were applied during wait_for.
+                        if (
+                            logical_acquired
+                            and self.context_config.context
+                            and self.context_config.defer_state_update
+                        ):
+                            rollback = {
+                                k: -v
+                                for k, v in self.context_config.defer_state_update.items()
+                            }
+                            self.context_config.context.apply_state(rollback)
             except Exception as e:
                 self.logger.error(
                     f"Unexpected error during processing message. Error {e}",
