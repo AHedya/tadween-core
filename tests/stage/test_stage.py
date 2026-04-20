@@ -441,7 +441,7 @@ class TestStageCoordination:
             handler=SuccessHandler(),
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=lambda _: True,
+                defer_predicate=lambda _ctx, _meta: True,
                 defer_timeout=0.1,
                 defer_poll_interval=0.1,
                 defer_state_update={"count": 1},
@@ -505,7 +505,7 @@ class TestStageCoordination:
             demands={"cuda": 1},
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=lambda _: False,  # Pass immediately
+                defer_predicate=lambda _ctx, _meta: False,  # Pass immediately
                 defer_state_update={"count": 1},
             ),
         )
@@ -537,7 +537,7 @@ class TestStageCoordination:
             policy=ErrorPolicy(),
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=lambda _: False,
+                defer_predicate=lambda _, __: False,
                 defer_state_update={"count": 1},
             ),
         )
@@ -599,7 +599,7 @@ class TestStageCoordination:
             task_queue=CriticalFailureTaskQueue(),
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=lambda _: False,
+                defer_predicate=lambda _, __: False,
                 defer_state_update={"count": 1},
                 done_state_update={"count": -1},
             ),

@@ -264,7 +264,8 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             if self.context_config.context:
                 if self.context_config.done_state_update:
                     self.context_config.context.apply_state(
-                        self.context_config.done_state_update
+                        self.context_config.done_state_update,
+                        metadata=message.metadata,
                     )
                 if self.context_config.notify_events:
                     self.context_config.context.notify(
@@ -446,6 +447,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                         self.context_config.context.wait_for(
                             event_name=self.context_config.defer_event,
                             predicate=self.context_config.defer_predicate,
+                            metadata=message.metadata,
                             poll_interval=self.context_config.defer_poll_interval,
                             timeout=self.context_config.defer_timeout,
                             update_on_acquire=self.context_config.defer_state_update,
@@ -484,16 +486,25 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                             self.resource_manager.release(self.demands)
 
                         # Rollback logical state changes if any were applied during wait_for.
-                        if (
-                            logical_acquired
-                            and self.context_config.context
-                            and self.context_config.defer_state_update
-                        ):
-                            rollback = {
-                                k: -v
-                                for k, v in self.context_config.defer_state_update.items()
-                            }
-                            self.context_config.context.apply_state(rollback)
+                        if logical_acquired and self.context_config.context:
+                            if self.context_config.rollback_state_update:
+                                self.context_config.context.apply_state(
+                                    self.context_config.rollback_state_update,
+                                    metadata=message.metadata,
+                                )
+                            elif isinstance(
+                                self.context_config.defer_state_update, dict
+                            ):
+                                rollback = {
+                                    k: -v
+                                    for k, v in self.context_config.defer_state_update.items()
+                                }
+                                self.context_config.context.apply_state(rollback)
+                            else:
+                                self.logger.warning(
+                                    f"Stage {self.name}: Cannot automatically rollback callable defer_state_update. "
+                                    "Please provide rollback_state_update."
+                                )
             except Exception as e:
                 self.logger.error(
                     f"Unexpected error during processing message. Error {e}",

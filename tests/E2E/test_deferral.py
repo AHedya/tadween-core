@@ -60,7 +60,7 @@ def test_workflow_deferral_backpressure():
 
     try:
 
-        def defer_predicate(ctx: WorkflowContext):
+        def defer_predicate(ctx: WorkflowContext, _meta):
             stash = ctx.state_get("stash_depth", 0)
             return stash >= MAX_STASH_DEPTH
 

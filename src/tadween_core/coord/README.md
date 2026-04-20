@@ -26,6 +26,7 @@ Provides an event-based signaling bus for inter-stage coordination.
 - **Behavior**: Hybrid notification/polling via `wait_for` predicates with atomic state transitions.
 - **Channels**: Directed event channels (e.g., "stash_updated") to avoid "thundering herd" wake-ups.
 - **Blocking**: Blocks the caller until a logical condition is met.
+- **Contextual Hooks**: Supports passing arbitrary `metadata` (e.g., message tags, artifact IDs) to both predicates and state update hooks.
 
 ---
 
@@ -33,8 +34,33 @@ Provides an event-based signaling bus for inter-stage coordination.
 
 ### Pure Predicates & Atomic Transitions
 To avoid race conditions and side-effects during polling (due to spurious wakeups), predicates should be **pure functions**.
-- **The Predicate**: Should only read state (e.g., `lambda ctx: ctx.state_get("stash") >= 3`).
-- **The Transition**: State mutations should be defined via `defer_state_update`. These are applied **atomically** only once the predicate clears and the internal lock is held.
+- **The Predicate**: Should only read state. Signature: `(WorkflowContext, dict) -> bool`.
+- **The Transition**: State mutations should be defined via `update_on_acquire` (in `wait_for`) or `apply_state`. Signature: `(WorkflowContext, dict) -> None`. These are applied **atomically** while the internal lock is held.
+
+### Contextual Resource Tracking (Reference Counting)
+In complex DAGs where an artifact (e.g., a large audio file) is used across multiple concurrent stages, simple global counters are insufficient. Contextual hooks allow tracking resource lifecycle by ID:
+
+```python
+# can_claim <=> defer_predicate
+def can_claim(ctx: WorkflowContext, meta: dict) -> bool:
+    # Block if limit reached AND this specific ID isn't already claimed
+    return (ctx.state_get("active_count") >= 5 
+            and meta["id"] not in ctx.state.get("active_ids", set()))
+
+# claim_hook <=> update_on_acquire (the callable one)
+def claim_hook(ctx: WorkflowContext, meta: dict) -> None:
+    active_ids = ctx.state.setdefault("active_ids", set())
+    if meta["id"] not in active_ids:
+        active_ids.add(meta["id"])
+        ctx.increment("active_count")
+
+# Usage in StageContextConfig
+config = StageContextConfig(
+    defer_predicate=can_claim,
+    defer_state_update=claim_hook,
+    # ...
+)
+```
 
 ### Rollback Safety
 The `Stage` collector loop ensures that logical claims are rolled back if subsequent steps (like physical resource acquisition or task submission) fail. This prevents "leaking" state increments if a message is never actually processed.

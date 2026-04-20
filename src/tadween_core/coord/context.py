@@ -29,10 +29,11 @@ class WorkflowContext:
     def wait_for(
         self,
         event_name: str,
-        predicate: Callable[[Self], bool],
+        predicate: Callable[[Self, dict], bool],
+        metadata: dict | None = None,
         poll_interval: float = 1.0,
         timeout: float | None = None,
-        update_on_acquire: dict[str, int] | None = None,
+        update_on_acquire: dict[str, int] | Callable[[Self, dict], None] | None = None,
     ) -> None:
         """
         Blocks the calling thread as long as the predicate returns True.
@@ -47,19 +48,21 @@ class WorkflowContext:
 
         Args:
             event_name: The channel to wait on.
-            predicate: A function ``(WorkflowContext) -> bool``. Blocks if True.
+            predicate: A function ``(WorkflowContext, dict) -> bool``. Blocks if True.
+            metadata: Generic metadata dictionary passed to the predicate and hook.
             poll_interval: Sleep time between predicate checks if no notification is received.
             timeout: Maximum time to wait.
-            update_on_acquire: Optional state updates to apply atomically after the wait clears.
+            update_on_acquire: Optional state updates (dict) or hook function ``(WorkflowContext, dict) -> None`` to apply atomically after the wait clears.
 
         Raises:
             TimeoutError: Deferral timeout
         """
+        metadata = metadata or {}
         start_time = time.monotonic()
         condition = self._get_condition(event_name)
 
         with condition:
-            while predicate(self):
+            while predicate(self, metadata):
                 if self._is_shutdown:
                     raise RuntimeError("WorkflowContext is shut down.")
                 if timeout is not None:
@@ -75,9 +78,12 @@ class WorkflowContext:
 
                 condition.wait(timeout=wait_time)
 
-            if update_on_acquire:
-                for key, delta in update_on_acquire.items():
-                    self.state[key] = self.state.get(key, 0) + delta
+            if update_on_acquire is not None:
+                if callable(update_on_acquire):
+                    update_on_acquire(self, metadata)
+                else:
+                    for key, delta in update_on_acquire.items():
+                        self.state[key] = self.state.get(key, 0) + delta
 
     def notify(self, events: list[str] | str | None = None, n: int = 0) -> None:
         """
@@ -115,10 +121,18 @@ class WorkflowContext:
         with self._lock:
             return self.state.get(key, default)
 
-    def apply_state(self, updates: dict[str, int]) -> None:
+    def apply_state(
+        self,
+        updates: dict[str, int] | Callable[[Self, dict], None],
+        metadata: dict | None = None,
+    ) -> None:
+        metadata = metadata or {}
         with self._lock:
-            for key, delta in updates.items():
-                self.state[key] = self.state.get(key, 0) + delta
+            if callable(updates):
+                updates(self, metadata)
+            else:
+                for key, delta in updates.items():
+                    self.state[key] = self.state.get(key, 0) + delta
 
     def shutdown(self) -> None:
         """
@@ -142,24 +156,36 @@ class StageContextConfig:
     Attributes:
         context: The shared WorkflowContext.
         defer_predicate: Pure function that blocks the stage if it returns True.
+            Receives (WorkflowContext, metadata_dict).
         defer_event: The logical channel to wait on (e.g., "stash_limit").
         defer_timeout: Max time to wait before failing the message.
         defer_poll_interval: Polling frequency for the predicate.
         notify_events: Channels to wake up when this stage finishes a task.
         n_notify: Number of threads to wake up (0 = all).
         defer_state_update: State changes applied ATOMICALLY after defer_predicate clears.
+            Can be a dict or a Callable[[WorkflowContext, metadata_dict], None].
         done_state_update: State changes applied when this stage finishes a task.
+            Can be a dict or a Callable[[WorkflowContext, metadata_dict], None].
+        rollback_state_update: Optional state changes applied if the stage fails to enqueue the task.
+            If None and defer_state_update is a dict, it is automatically derived by inverting values.
     """
 
     context: WorkflowContext | None = None
-    defer_predicate: Callable[[WorkflowContext], bool] | None = None
+    defer_predicate: Callable[[WorkflowContext, dict], bool] | None = None
     defer_event: str = "default"
     defer_timeout: float | None = None
     defer_poll_interval: float = 1.0
     notify_events: list[str] = field(default_factory=list)
     n_notify: int = 0
-    defer_state_update: dict[str, int] = field(default_factory=dict)
-    done_state_update: dict[str, int] = field(default_factory=dict)
+    defer_state_update: dict[str, int] | Callable[[WorkflowContext, dict], None] = (
+        field(default_factory=dict)
+    )
+    done_state_update: dict[str, int] | Callable[[WorkflowContext, dict], None] = field(
+        default_factory=dict
+    )
+    rollback_state_update: (
+        dict[str, int] | Callable[[WorkflowContext, dict], None] | None
+    ) = None
 
     def __post_init__(self):
         if not self.notify_events:
