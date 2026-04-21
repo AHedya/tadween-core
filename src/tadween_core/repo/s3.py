@@ -61,7 +61,7 @@ class S3Repo(BaseArtifactRepo[ART, PartNameT]):
 
         super().__init__(artifact_type)
 
-        self._client = boto_client or boto3.client("s3", client_config.boto_kwargs())
+        self._client = boto_client or boto3.client("s3", **client_config.boto_kwargs())
         self._bucket_id = bucket_id
         self._prefix = prefix.rstrip("/")
         self._compress_threshold = compress_threshold_bytes
