@@ -1,6 +1,6 @@
 [project]
 name = "tadween-core"
-version = "0.1.0a10"
+version = "0.1.0a11"
 description = "`Tadween-core` is a modular, embedded micro-orchestrator designed for building complex, stateful processing pipelines from simple linear chains to full DAG-based workflows with zero external services required."
 authors = [{ name = "Abdulrahman Hedya", email = "abdohedya19@gmail.com" }]
 readme = "README.md"
