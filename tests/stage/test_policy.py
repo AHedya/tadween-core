@@ -1,5 +1,7 @@
 from typing import Any
 
+from pydantic import BaseModel
+
 from tadween_core.broker import Message
 from tadween_core.stage.policy import (
     DefaultStagePolicy,
@@ -284,7 +286,6 @@ class TestStagePolicyBuilder:
 
 class TestPolicyTypePreservation:
     def test_generic_types_preserved_in_builder(self):
-        from pydantic import BaseModel
 
         class MyInput(BaseModel):
             x: int

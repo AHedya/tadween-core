@@ -14,7 +14,6 @@ from tadween_core.coord import (
     StageContextConfig,
     WorkflowContext,
 )
-from tadween_core.exceptions import StageError
 from tadween_core.handler import BaseHandler, HandlerFactory, InputT, OutputT
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.stage.policy import DefaultStagePolicy, StagePolicy
@@ -149,6 +148,7 @@ class Workflow:
             stage_name=name,
             repo=self.repo,
             payload_extractor=self.payload_extractor,
+            context=self.context,
         )
 
         stage.policy = routing_policy
@@ -308,7 +308,9 @@ class Workflow:
             self.broker.subscribe(
                 topic=topic,
                 handler=self.routing_handler_factory(
-                    stage=entry_stage, fn_name=f"route.start_to_{stage_name}"
+                    stage=entry_stage,
+                    fn_name=f"route.start_to_{stage_name}",
+                    is_entry_point=True,
                 ),
                 auto_ack=False,
             )
@@ -319,12 +321,20 @@ class Workflow:
 
         self.logger.info(f"Workflow '{self.name}' built successfully.")
 
-    def routing_handler_factory(self, stage: Stage, fn_name: str):
+    def routing_handler_factory(
+        self, stage: Stage, fn_name: str, is_entry_point: bool = False
+    ):
         def handler(msg: Message, stage=stage):
+            artifact_id = msg.metadata.get("artifact_id")
+            if is_entry_point and artifact_id and self.context:
+                self.context.track_artifact_progress(artifact_id, 1)
+
             try:
                 stage.submit_message(msg)
-            except StageError:
-                pass
+            except Exception:
+                if is_entry_point and artifact_id and self.context:
+                    self.context.track_artifact_progress(artifact_id, -1)
+                raise
 
         handler.__name__ = fn_name
         return handler
@@ -379,12 +389,16 @@ class Workflow:
             self._timer.cancel()
 
         self.logger.info(f"Closing workflow '{self.name}'...")
-        if hasattr(self.broker, "close"):
-            # If InMemoryBroker, it's fine. If shared RabbitMQ connection, be careful.
-            self.broker.close(timeout=timeout, force=force)
 
         if self.resource_manager and not self.resource_manager.is_shutdown:
             self.resource_manager.shutdown()
+
+        if self.context and not self.context.is_shutdown:
+            self.context.shutdown()
+
+        if hasattr(self.broker, "close"):
+            # If InMemoryBroker, it's fine. If shared RabbitMQ connection, be careful.
+            self.broker.close(timeout=timeout, force=force)
 
         for stage in self._stages.values():
             stage.close(force=force)

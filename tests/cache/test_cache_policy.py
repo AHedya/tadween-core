@@ -1,6 +1,7 @@
 import time
 
 import pytest
+from pydantic import BaseModel
 
 from tadween_core.cache.cache import Cache
 from tadween_core.cache.policy import CachePolicy
@@ -228,7 +229,6 @@ def test_delete_on_read_behavior():
 
 def test_pydantic_model_validation():
     """Test Pydantic model validation in cache."""
-    from pydantic import BaseModel
 
     class UserSchema(BaseModel):
         username: str
@@ -252,7 +252,6 @@ def test_pydantic_model_validation():
 
 def test_delete_on_read_with_pydantic():
     """Test delete_on_read works with Pydantic models."""
-    from pydantic import BaseModel
 
     class SimplePydantic(BaseModel):
         field1: str | None = None

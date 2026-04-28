@@ -2,6 +2,7 @@ import logging
 from collections.abc import Callable
 
 from tadween_core.broker import BaseMessageBroker
+from tadween_core.coord.context import WorkflowContext
 from tadween_core.exceptions import PolicyError, RoutingError
 from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.stage.policy import (
@@ -35,6 +36,7 @@ class WorkflowRoutingPolicy(
         # `OutputT` | `None` as intercept might not provide context payload if canceled
         payload_extractor: Callable[[OutputT | None], dict] | None = None,
         logger: logging.Logger | None = None,
+        context: WorkflowContext | None = None,
     ):
         self._stage_policy = stage_policy
         self._output_topics = output_topics
@@ -42,6 +44,7 @@ class WorkflowRoutingPolicy(
         self._broker = broker
         self._repo = repo
         self.logger = logger or logging.getLogger("tadween.workflow.router")
+        self.context = context
 
         # Default: no payload passing
         # If returns:
@@ -91,6 +94,24 @@ class WorkflowRoutingPolicy(
                 repo=self._repo or repo,
                 cache=cache,
             )
+
+        # Task tracking: Hand over from current `artifact` to N children or terminate
+        if self.context:
+            artifact_id = message.metadata.get("artifact_id")
+            cache_key = message.metadata.get("cache_key")
+            if artifact_id:
+                # If publishing, net change is len(topics) - 1.
+                # If not publishing (cancelled), net change is -1.
+                num_children = len(self._output_topics) if context.action.publish else 0
+                new_count = self.context.track_artifact_progress(
+                    artifact_id,
+                    num_children - 1,
+                    cache_key=cache_key,
+                )
+                self.logger.debug(
+                    f"router {self._stage_name} intercept artifacts={new_count} "
+                    f"for {artifact_id} (num_children={num_children})"
+                )
 
         if active_broker and self._output_topics and context.action.publish:
             try:
@@ -154,6 +175,17 @@ class WorkflowRoutingPolicy(
             cache=cache,
         )
 
+        # Task tracking: Hand over from current `artifact` to N children or terminate
+        if self.context:
+            artifact_id = message.metadata.get("artifact_id")
+            cache_key = message.metadata.get("cache_key")
+            if artifact_id:
+                num_children = len(self._output_topics)
+                # Net change: N children minus the 1 task we just finished
+                self.context.track_artifact_progress(
+                    artifact_id, num_children - 1, cache_key=cache_key
+                )
+
         # Routing (The "Glue" Logic)
         if active_broker and self._output_topics:
             try:
@@ -204,6 +236,14 @@ class WorkflowRoutingPolicy(
                 message=message, error=error, broker=active_broker
             )
         finally:
+            if self.context:
+                artifact_id = message.metadata.get("artifact_id")
+                cache_key = message.metadata.get("cache_key")
+                if artifact_id:
+                    self.context.track_artifact_progress(
+                        artifact_id, -1, cache_key=cache_key
+                    )
+
             if active_broker:
                 # TODO: Determine requeue mechanism and control
                 active_broker.nack(message.id, requeue_message=None)

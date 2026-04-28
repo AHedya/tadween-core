@@ -4,7 +4,7 @@ import pytest
 
 from tadween_core.broker import Message
 from tadween_core.exceptions import PolicyError, RoutingError
-from tadween_core.stage.policy import InterceptionContext
+from tadween_core.stage.policy import InterceptionAction, InterceptionContext
 from tadween_core.task_queue.base import TaskEnvelope, TaskMetadata
 from tadween_core.workflow.router import WorkflowRoutingPolicy
 
@@ -70,7 +70,6 @@ class TestWorkflowRoutingPolicy:
 
     def test_intercept_cancel_preset(self):
         inner_policy = MagicMock()
-        from tadween_core.stage.policy import InterceptionAction
 
         inner_policy.intercept.return_value = InterceptionContext(
             intercepted=True, action=InterceptionAction.cancel()
@@ -92,7 +91,6 @@ class TestWorkflowRoutingPolicy:
 
     def test_intercept_custom_action(self):
         inner_policy = MagicMock()
-        from tadween_core.stage.policy import InterceptionAction
 
         # Custom: only ack and on_done, no on_success, no publish
         inner_policy.intercept.return_value = InterceptionContext(

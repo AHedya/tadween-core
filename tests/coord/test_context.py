@@ -64,8 +64,8 @@ class TestWorkflowContext:
         ctx = WorkflowContext()
         results = []
 
-        def waiter(event, key):
-            ctx.wait_for(event, lambda ctx, _: key not in ctx.state)
+        def waiter(evt, key):
+            ctx.wait_for(evt, lambda ctx, _: key not in ctx.state)
             with ctx._lock:
                 results.append(key)
 
@@ -247,3 +247,105 @@ class TestContextualHooks:
 
         ctx.apply_state(increment_by_meta)  # default meta is {}
         assert ctx.state["count"] == 11
+
+
+class TestArtifactTracking:
+    def test_track_artifact_progress_increments(self):
+        ctx = WorkflowContext()
+        artifact_id = "test-art-1"
+
+        # Increment by 2
+        count = ctx.track_artifact_progress(artifact_id, 2)
+        assert count == 2
+        assert ctx.state[f"_artifacts:{artifact_id}"] == 2
+
+    def test_track_artifact_progress_cleanup_and_notify(self):
+        ctx = WorkflowContext()
+        artifact_id = "test-art-2"
+        events_fired = []
+
+        def on_done(artifact_id, **kwargs):
+            events_fired.append((artifact_id, kwargs))
+
+        ctx.on_artifact_done(on_done)
+
+        # Set initial count to 1
+        ctx.track_artifact_progress(artifact_id, 1)
+        assert f"_artifacts:{artifact_id}" in ctx.state
+
+        # Decrement to 0
+        ctx.track_artifact_progress(artifact_id, -1, custom_meta="foo")
+
+        # Give callback thread time (though in this implementation callbacks might be synchronous or rely on the caller thread)
+        # Wait, the `notify` in `WorkflowContext` actually invokes the callbacks synchronously inside the `notify` method!
+        # Let's check notify: "for cb in callbacks: ... cb(event_name, **kwargs)" -> It's synchronous.
+
+        # Verify cleanup
+        assert f"_artifacts:{artifact_id}" not in ctx.state
+
+        # Verify notification
+        assert len(events_fired) == 1
+        assert events_fired[0][0] == artifact_id
+        assert events_fired[0][1]["custom_meta"] == "foo"
+
+    def test_track_artifact_progress_negative_count(self):
+        # Even if count goes below zero, it should trigger notification and cleanup.
+        ctx = WorkflowContext()
+        artifact_id = "test-art-3"
+        events_fired = []
+
+        ctx.on_artifact_done(
+            lambda artifact_id, **kwargs: events_fired.append(artifact_id)
+        )
+
+        # Decrement directly to -1
+        ctx.track_artifact_progress(artifact_id, -1)
+
+        assert f"_artifacts:{artifact_id}" not in ctx.state
+        assert events_fired == [artifact_id]
+
+
+class TestEventfulBus:
+    def test_multiple_events_notified(self):
+        ctx = WorkflowContext()
+        fired = []
+
+        ctx.on("event_A", lambda **kwargs: fired.append("event_A"))
+        ctx.on("event_B", lambda **kwargs: fired.append("event_B"))
+
+        ctx.notify(["event_A", "event_B"])
+
+        assert "event_A" in fired
+        assert "event_B" in fired
+
+    def test_notify_all(self):
+        ctx = WorkflowContext()
+        fired = []
+
+        ctx.on("event_X", lambda **kwargs: fired.append("event_X"))
+        ctx.on("event_Y", lambda **kwargs: fired.append("event_Y"))
+
+        # Notify without specifying events -> notifies all conditions and callbacks
+        ctx.notify()
+
+        # Both callbacks should be triggered
+        assert "event_X" in fired
+        assert "event_Y" in fired
+
+    def test_callback_exception_handled(self, caplog):
+        ctx = WorkflowContext()
+
+        def bad_callback(**kwargs):  # noqa: ARG001
+            raise ValueError("Intentional error")
+
+        def good_callback(**kwargs):
+            pass
+
+        ctx.on("test_err", bad_callback)
+        ctx.on("test_err", good_callback)
+
+        # notify should catch the exception from bad_callback and continue
+        ctx.notify("test_err")
+
+        # Check logs if possible, but mainly ensure it doesn't raise exception
+        assert "Callback for event 'test_err' failed" in caplog.text

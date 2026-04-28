@@ -44,7 +44,7 @@ B1_tags = []
 def B1(msg: Message):
     tag = msg.metadata.get("tag", "N/A")
     print(f"[B1] Got the tag: `{tag}`. Acknowledging")
-    # misuse. topic dispatcher thread gets hanged by this sleep.
+    # This sleep runs in a worker thread, not the dispatcher thread.
     time.sleep(1)
     broker.ack(msg.id)
 
@@ -58,8 +58,8 @@ for i in range(5):
     msg = Message(topic="topic.init", metadata={"tag": str(i)})
     broker.publish(msg)
 
-# Timeout. closes forcibly while still there are two tasks un-ack-ed
+# Closes the broker. It will wait for pending tasks up to 3 seconds.
 broker.close(3)
 
-# try use close without any timeout. The broker closes automatically on acknowledging the third task.
+# If close() is called without a timeout, it will wait indefinitely for all pending tasks to be acknowledged.
 # broker.close()

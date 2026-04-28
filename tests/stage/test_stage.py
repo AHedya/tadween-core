@@ -1,5 +1,6 @@
 import threading
 import time
+from concurrent.futures import Future
 from typing import Any
 
 import pytest
@@ -578,7 +579,6 @@ class TestStageCoordination:
 
     def test_logical_state_balance_on_critical_failure(self):
         ctx = WorkflowContext()
-        from concurrent.futures import Future
 
         class CriticalFailureTaskQueue:
             def submit(self, fn, on_done, inputs=None, metadata=None):

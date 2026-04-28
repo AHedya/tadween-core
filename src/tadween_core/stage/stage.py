@@ -470,11 +470,13 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                         try:
                             self.resource_manager.acquire(self.demands)
                             physical_acquired = True
-                        except ResourceError:
+                        except ResourceError as e:
                             self.logger.warning(
                                 f"Resource acquisition aborted (manager shutdown) for message {message.id}"
                             )
-                            # Implicitly triggers rollback of Step 1 in 'finally' block
+                            self.policy.on_error(
+                                message, StageError(str(e), self.name), self.broker
+                            )
                             continue
 
                     # Process and Enqueue
@@ -510,6 +512,10 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
                     f"Unexpected error during processing message. Error {e}",
                     exc_info=True,
                 )
+                if "message" in locals() and message is not None:
+                    self.policy.on_error(
+                        message, StageError(str(e), self.name), self.broker
+                    )
             finally:
                 self._stage_queue.task_done()
 

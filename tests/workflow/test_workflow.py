@@ -1,9 +1,15 @@
+import threading
+from queue import Queue
+
 import pytest
 from pydantic import BaseModel
 
 from tadween_core.broker import InMemoryBroker
+from tadween_core.exceptions import ResourceError
 from tadween_core.handler.base import BaseHandler
 from tadween_core.stage.policy import DefaultStagePolicy
+from tadween_core.stage.stage import Stage
+from tadween_core.workflow.router import WorkflowRoutingPolicy
 from tadween_core.workflow.workflow import Workflow
 
 
@@ -266,7 +272,6 @@ class TestWorkflowTopologyInfo:
 
 class TestWorkflowIntegrateStage:
     def test_integrate_stage_accepts_pre_built_stage(self, workflow):
-        from tadween_core.stage.stage import Stage
 
         handler = SimpleHandler()
         stage = Stage(handler=handler, name="integrated_stage")
@@ -275,8 +280,6 @@ class TestWorkflowIntegrateStage:
         assert "integrated" in workflow._stages
 
     def test_integrate_stage_wraps_policy_with_routing(self, workflow):
-        from tadween_core.stage.stage import Stage
-        from tadween_core.workflow.router import WorkflowRoutingPolicy
 
         handler = SimpleHandler()
         stage = Stage(handler=handler, name="wrapped_stage")
@@ -361,3 +364,98 @@ class TestWorkflowLifeLength:
         workflow.close()
 
         assert workflow.resource_manager.is_shutdown
+
+    def test_close_unblocks_collector_waiting_on_context(self, inmemory_broker):
+        workflow = Workflow(broker=inmemory_broker)
+        workflow.context.increment("slot", 1)
+
+        failed = Queue()
+        acquired = 0
+
+        def acquire_resource():
+            nonlocal acquired
+            try:
+                workflow.context.wait_for(
+                    "slot-free",
+                    lambda ctx, _: ctx.state.get("slot", 0) <= 0,
+                    poll_interval=None,
+                )
+                workflow.context.decrement("slot", 1)
+                acquired += 1
+
+            except Exception:
+                failed.put(1)
+
+        threads = [
+            threading.Thread(target=acquire_resource, daemon=True) for i in range(3)
+        ]
+
+        for t in threads:
+            t.start()
+
+        workflow.context.notify("slot-free")
+        workflow.close()
+        for t in threads:
+            t.join()
+
+        assert workflow.context.is_shutdown
+        f = 0
+        while not failed.empty():
+            f += failed.get()
+        assert f == 2
+        assert acquired == 1
+
+    def test_close_unblocks_collector_waiting_on_resources(self, inmemory_broker):
+
+        workflow = Workflow(broker=inmemory_broker, resources={"gpu": 1})
+        failed = Queue()
+        acquired = 0
+
+        def acquire_resource():
+            nonlocal acquired
+            try:
+                workflow.resource_manager.acquire({"gpu": 1})
+                acquired += 1
+            except ResourceError:
+                failed.put(1)
+
+        threads = [
+            threading.Thread(target=acquire_resource, daemon=True) for i in range(3)
+        ]
+
+        for t in threads:
+            t.start()
+        workflow.close()
+        for t in threads:
+            t.join()
+
+        assert workflow.resource_manager.is_shutdown
+        f = 0
+        while not failed.empty():
+            f += failed.get()
+        assert f == 2
+        assert acquired == 1
+
+    def test_close_topological_robustness(self, inmemory_broker):
+        """
+        Verify that shutting down stages doesn't cause errors in a DAG
+        even if they are closed in arbitrary order.
+        """
+        workflow = Workflow(
+            broker=inmemory_broker, default_payload_extractor=lambda x: None
+        )
+
+        # A -> B
+        workflow.add_stage("a", handler=SimpleHandler())
+        workflow.add_stage("b", handler=SimpleHandler())
+        workflow.link("a", "b")
+        workflow.set_entry_point("a")
+        workflow.build()
+
+        # Flood with messages
+        for i in range(10):
+            workflow.submit({"value": i})
+
+        # Close immediately - should not raise errors even if A tries to send to B during B's shutdown
+        workflow.close(timeout=5.0)
+        assert True

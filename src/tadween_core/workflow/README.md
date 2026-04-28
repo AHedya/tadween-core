@@ -22,7 +22,8 @@ to the next stage's topic). The two layers never need to know about each other.
 ### Coord & Flow Control
 Tadween uses a dedicated `coord` layer for managing logical and physical backpressure. 
 
-- **WorkflowContext**: A shared synchronization engine used for logical coordination and inter-stage signaling. It provides a hybrid notification/polling mechanism (`wait_for`) that allows stages to stall their processing until a logical predicate is met.
+- **WorkflowContext**: A shared synchronization engine used for logical coordination and inter-stage signaling. It provides a hybrid notification/polling mechanism (`wait_for`) that allows stages to stall their processing until a logical condition is met. It also handles **Artifact Completion Tracking**, automatically notifying when all concurrent branches for a specific artifact ID have finished.
+
 - **StageContextConfig**: A configuration object for stages to declare their coordination requirements (predicates, event channels, and notification targets).
 - **ResourceManager**: Handles physical resource throttling (e.g. CUDA, RAM).
 

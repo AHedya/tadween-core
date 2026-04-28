@@ -24,18 +24,39 @@ Controls access to finite hardware or system resources (e.g., CUDA tokens, RAM M
 ### WorkflowContext (Logical Synchronization)
 Provides an event-based signaling bus for inter-stage coordination.
 - **Behavior**: Hybrid notification/polling via `wait_for` predicates with atomic state transitions.
-- **Channels**: Directed event channels (e.g., "stash_updated") to avoid "thundering herd" wake-ups.
+- **Channels**: Directed event channels to avoid "thundering herd" wake-ups.
+- **Artifact Tracking**: Built-in support for distributed task tracking via `track_artifact_progress`.
+- **Deadlock Prevention**: Dispatches notifications outside of internal locks.
 - **Blocking**: Blocks the caller until a logical condition is met.
-- **Contextual Hooks**: Supports passing arbitrary `metadata` (e.g., message tags, artifact IDs) to both predicates and state update hooks.
+- **Contextual Hooks**: Supports passing arbitrary `metadata` to predicates and state update hooks.
 
 ---
 
 ## Key Patterns
 
+### Artifact Quiescence (Completion Tracking)
+In a distributed DAG, determining when an "Artifact" is fully processed is difficult. `WorkflowContext` provides a specialized method for tracking this logic without leaking memory or causing deadlocks.
+
+```python
+# In the entry point:
+context.track_artifact_progress(artifact_id, 1)
+
+# In a callback listener:
+def post_process(artifact_id, **kwargs):
+    print(f"Artifact {artifact_id} is finished!")
+
+context.on_artifact_done(post_process)
+```
+
 ### Pure Predicates & Atomic Transitions
-To avoid race conditions and side-effects during polling (due to spurious wakeups), predicates should be **pure functions**.
+To avoid race conditions and side-effects during polling, predicates should be **pure functions**.
 - **The Predicate**: Should only read state. Signature: `(WorkflowContext, dict) -> bool`.
 - **The Transition**: State mutations should be defined via `update_on_acquire` (in `wait_for`) or `apply_state`. Signature: `(WorkflowContext, dict) -> None`. These are applied **atomically** while the internal lock is held.
+
+### Event Notification
+Notifications trigger registered callbacks.
+- **Callback Signature**: `callback(**kwargs)`. The event name is omitted to keep handlers focused on domain data.
+- **Exception Safety**: The context catches exceptions in callbacks, ensuring one failing handler doesn't crash the entire notification bus.
 
 ### Contextual Resource Tracking (Reference Counting)
 In complex DAGs where an artifact (e.g., a large audio file) is used across multiple concurrent stages, simple global counters are insufficient. Contextual hooks allow tracking resource lifecycle by ID:

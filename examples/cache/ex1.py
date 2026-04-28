@@ -32,7 +32,7 @@ user = cache.get_or_create("id-1")
 user.age = 20
 print(user)
 
-# Watch our converting partial bucket back to an instance:
+# Watch out converting partial bucket back to an instance:
 try:
     original_user = user.to_instance()
     original_user.model_dump()

@@ -1,23 +1,28 @@
+import logging
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Self
 
+EVENT_ARTIFACT_DONE = "__tadween.artifact.done"
+
 
 class WorkflowContext:
     """
     Global context for managing workflow state and logical synchronization.
 
-    Provides event channels for stages to wait on and notify each other,
-    allowing complex backpressure and deferral logic without coupling stages.
+    Acts as a shared state container and a Reactive Event Bus. Stages can wait on
+    conditions or register callbacks to react to specific events (e.g., artifact completion).
     """
 
-    def __init__(self):
+    def __init__(self, logger: logging.Logger | None = None):
         self._lock = threading.RLock()
         self._conditions: dict[str, threading.Condition] = {}
+        self._callbacks: dict[str, list[Callable]] = {}
         self._is_shutdown = False
         self.state: dict[str, Any] = {}
+        self.logger = logger or logging.getLogger("tadween.coord.context")
 
     def _get_condition(self, event_name: str) -> threading.Condition:
         """Get or create a condition for a specific event channel."""
@@ -31,7 +36,7 @@ class WorkflowContext:
         event_name: str,
         predicate: Callable[[Self, dict], bool],
         metadata: dict | None = None,
-        poll_interval: float = 1.0,
+        poll_interval: float | None = 1.0,
         timeout: float | None = None,
         update_on_acquire: dict[str, int] | Callable[[Self, dict], None] | None = None,
     ) -> None:
@@ -64,6 +69,7 @@ class WorkflowContext:
         with condition:
             while predicate(self, metadata):
                 if self._is_shutdown:
+                    # TODO: Create and use context error instead of runtime to match resource manager
                     raise RuntimeError("WorkflowContext is shut down.")
                 if timeout is not None:
                     remaining = timeout - (time.monotonic() - start_time)
@@ -85,18 +91,33 @@ class WorkflowContext:
                     for key, delta in update_on_acquire.items():
                         self.state[key] = self.state.get(key, 0) + delta
 
-    def notify(self, events: list[str] | str | None = None, n: int = 0) -> None:
+    def notify(
+        self, events: list[str] | str | None = None, n: int = 0, **kwargs
+    ) -> None:
         """
         Wakes up all or a number of threads waiting on a specific event channel.
+        and invokes any registered callbacks for those events.
+
+        Args:
+            events: Events (channels) to notify. `None` means notify *all*
+            n: number of waiting threads on this channel to wake up. `<=0` means all waiting threads.
+            kwargs: keyword args passed to the registered callbacks for this event.
         """
         target: list[threading.Condition] = []
+        target_events: list[str] = []
 
         if events is None:
             with self._lock:
                 target = list(self._conditions.values())
+                target_events = list(self._conditions.keys()) + list(
+                    self._callbacks.keys()
+                )
+                target_events = list(set(target_events))
         elif isinstance(events, str):
             target = [self._get_condition(events)]
+            target_events = [events]
         else:
+            target_events = events
             for name in events:
                 target.append(self._get_condition(name))
 
@@ -106,6 +127,66 @@ class WorkflowContext:
                     condition.notify_all()
                 else:
                     condition.notify(n=n)
+
+        # Invoke callbacks outside the lock
+        for event_name in target_events:
+            callbacks = []
+            with self._lock:
+                callbacks = list(self._callbacks.get(event_name, []))
+            for cb in callbacks:
+                try:
+                    cb(**kwargs)
+                except Exception as e:
+                    self.logger.error(
+                        f"Callback for event '{event_name}' failed: {e}", exc_info=True
+                    )
+
+    def on(self, event_name: str, callback: Callable):
+        """
+        Registers a callback to be executed when an event is notified.
+
+        Args:
+            event_name: The name of the event to listen for.
+            callback: A callable invoked as `callback(**kwargs)`.
+        """
+        with self._lock:
+            if event_name not in self._callbacks:
+                self._callbacks[event_name] = []
+            self._callbacks[event_name].append(callback)
+
+    def track_artifact_progress(self, artifact_id: str, delta: int, **kwargs) -> int:
+        """
+        Atomically updates task count for an artifact and cleans up state if completed.
+
+        If an artifact is distributed across many stages, the artifact count is greater than *one* (>=1).\n
+        An artifact is considered *done* when its count reaches *zero* (<=0).
+        This quiescence-like mechanism is handled automatically by `WorkflowRoutingPolicy`.
+
+        Args:
+            artifact_id: The unique identifier for the artifact.
+            delta: The net change in task count (e.g., num_children - 1).
+            **kwargs: Additional metadata passed to the 'artifact_done' event.
+
+        Returns:
+            The new task count.
+        """
+        should_notify = False
+        new_count = 0
+        key = f"_artifacts:{artifact_id}"
+
+        with self._lock:
+            new_count = self.state.get(key, 0) + delta
+            if new_count <= 0:
+                should_notify = True
+                # Cleanup state to prevent memory leaks
+                self.state.pop(key, None)
+            else:
+                self.state[key] = new_count
+
+        if should_notify:
+            # Trigger notification outside the lock to prevent deadlocks
+            self.notify(EVENT_ARTIFACT_DONE, artifact_id=artifact_id, **kwargs)
+        return new_count
 
     def increment(self, key: str, delta: int = 1) -> int:
         with self._lock:
@@ -146,6 +227,18 @@ class WorkflowContext:
         for condition in conditions:
             with condition:
                 condition.notify_all()
+
+    @property
+    def is_shutdown(self) -> bool:
+        return self._is_shutdown
+
+    def on_artifact_done(self, callback: Callable):
+        """
+        Registers a callback to be executed when an artifact finishes processing.
+
+        The callback is invoked as `callback(artifact_id=..., **kwargs)`.
+        """
+        self.on(EVENT_ARTIFACT_DONE, callback)
 
 
 @dataclass(slots=True)

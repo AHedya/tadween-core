@@ -3,6 +3,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from pydantic import BaseModel
 
 from tadween_core.cache.simple_cache import SimpleCache
 
@@ -166,7 +167,6 @@ class TestTypeValidation:
             simple_cache.set_bucket("key1", AnotherSchema(name="test"))
 
     def test_pydantic_instance_accepted(self):
-        from pydantic import BaseModel
 
         class PydanticSchema(BaseModel):
             name: str

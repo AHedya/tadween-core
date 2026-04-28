@@ -4,6 +4,8 @@ import multiprocessing
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from tadween_core.logger.formatters import JsonFormatter
 from tadween_core.logger.process_queue import ProcessQueueLogger
 
@@ -67,7 +69,6 @@ class TestProcessQueueLogger:
             assert isinstance(q, multiprocessing.queues.Queue)
 
     def test_mp_context_and_log_queue_mutually_exclusive(self):
-        import pytest
 
         mp_q = multiprocessing.Queue()
         ctx = multiprocessing.get_context("spawn")
