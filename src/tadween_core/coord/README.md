@@ -35,17 +35,20 @@ Provides an event-based signaling bus for inter-stage coordination.
 ## Key Patterns
 
 ### Artifact Quiescence (Completion Tracking)
-In a distributed DAG, determining when an "Artifact" is fully processed is difficult. `WorkflowContext` provides a specialized method for tracking this logic without leaking memory or causing deadlocks.
+In a distributed DAG, determining when an "Artifact" (a logical unit of work, e.g., a file) is fully processed is difficult. `WorkflowContext` provides a specialized method for tracking this logic without leaking memory or causing deadlocks.
+
+**Resilience**: The tracking mechanism is built into the routing layer. An artifact is considered "done" when all its associated tasks (and any child tasks they spawned) have finished, **regardless of whether they succeeded or failed.**
 
 ```python
 # In the entry point:
 context.track_artifact_progress(artifact_id, 1)
 
 # In a callback listener:
-def post_process(artifact_id, **kwargs):
-    print(f"Artifact {artifact_id} is finished!")
+def cleanup_resources(artifact_id, **kwargs):
+    # This runs exactly once when the entire chain for this ID is finished (Success OR Error)
+    print(f"Artifact {artifact_id} lifecycle complete.")
 
-context.on_artifact_done(post_process)
+context.on_artifact_done(cleanup_resources)
 ```
 
 ### Pure Predicates & Atomic Transitions

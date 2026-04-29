@@ -122,6 +122,33 @@ def resolve_inputs(self, message, audio=None, **kwargs):
 - `@check_repo(aid, condition)`: Intercepts execution if certain artifact parts already exist in the repo.
 - `@done_timing()`: Logs execution duration and waiting time.
 - `@log_errors()`: Automatically logs errors encountered during the stage lifecycle.
+- `@side_effect`: Marks a policy hook (like `on_success`) as non-critical. Exceptions will be caught, logged as warnings, and suppressed, allowing the pipeline to continue. Use this for webhooks, analytics, or other optional side-effects.
+
+## Critical vs. Non-Critical Events
+
+In `tadween-core`, the **Streamline Path** (Data Flow) is strictly reliable. By default, any exception in a policy hook is treated as a **Critical Failure**:
+
+1. **Policy Hooks as Gatekeepers**: Hooks like `on_success` often handle data persistence or stashing that downstream stages depend on. If these fail, the pipeline *must* stop to prevent inconsistent data or "zombie" tasks.
+2. **Error Propagation**: An unhandled exception in a hook is wrapped in a `PolicyError`, triggering `on_error` and stopping the message's propagation through the DAG.
+
+### When to use `@side_effect`
+Use the `@side_effect` decorator when a piece of logic is **informational** or **external** and should not affect the core data flow:
+- Sending a notification or webhook.
+- Updating an external dashboard.
+- Writing to a non-essential log.
+
+```python
+class MyPolicy(DefaultStagePolicy):
+    def on_success(self, task_id, message, result, ...):
+        # 1. CRITICAL: Save to repo for next stage (if this fails, pipeline stops)
+        repo.save(result)
+
+        # 2. NON-CRITICAL: Side-effect (if this fails, pipeline continues)
+        try:
+            notify_external_service(result)
+        except Exception as e:
+            logger.warning(...)
+```
 
 ## Anatomy
 ```

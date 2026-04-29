@@ -362,6 +362,34 @@ def check_repo(
     return decorator
 
 
+def side_effect(func: Callable[P, Any]) -> Callable[P, Any]:
+    """
+    Marks a policy hook as a non-critical side-effect.
+
+    Exceptions raised by the decorated function will be caught, logged as
+    warnings, and suppressed, allowing the stage's execution flow to continue.
+
+    Example:
+        @side_effect
+        def on_success(self, result, ...):
+            send_non_critical_webhook(result)
+    """
+
+    @functools.wraps(func)
+    def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> Any:
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            policy_logger = getattr(self, "logger", logger)
+            policy_logger.warning(
+                f"Non-critical side-effect failed in {func.__name__}: {e}.",
+                exc_info=True,
+            )
+            return None
+
+    return wrapper
+
+
 def inject_cache(
     cache_field: str,
     inject_as: str,
