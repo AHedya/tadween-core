@@ -1,7 +1,7 @@
 # Todos
 
 ## Cache
-- [ ] Create test suite covers/triggers thread-safety weak points.
+- [x] Create test suite covers/triggers thread-safety weak points.
 - [ ] Fix `Cache` thread-safety weak points:
   - [ ] `CacheEntry.touch`: Requires atomic update.
   - [ ] `Cache._bucket_sizes`: Requires atomic update.
@@ -16,6 +16,6 @@
   - [ ] policy decorators being decorating incompatible events
 
 ## Retry mechanism
-- [ ] design
-- [ ] implement
+- [x] design
+- [x] implement
 - [ ] test
