@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from tadween_core.broker import BaseMessageBroker
 from tadween_core.coord.context import WorkflowContext
@@ -14,6 +15,12 @@ from tadween_core.stage.policy import (
     StagePolicy,
 )
 from tadween_core.task_queue.base import TaskEnvelope, TaskMetadata
+
+
+@dataclass(slots=True)
+class RetryPolicy:
+    retry_on: set[type[Exception] | str]
+    max_retries: int = 3
 
 
 class WorkflowRoutingPolicy(
@@ -37,6 +44,7 @@ class WorkflowRoutingPolicy(
         payload_extractor: Callable[[OutputT | None], dict] | None = None,
         logger: logging.Logger | None = None,
         context: WorkflowContext | None = None,
+        retry_policy: RetryPolicy | None = None,
     ):
         self._stage_policy = stage_policy
         self._output_topics = output_topics
@@ -45,6 +53,7 @@ class WorkflowRoutingPolicy(
         self._repo = repo
         self.logger = logger or logging.getLogger("tadween.workflow.router")
         self.context = context
+        self.retry_policy = retry_policy
 
         # Default: no payload passing
         # If returns:
@@ -236,7 +245,38 @@ class WorkflowRoutingPolicy(
                 message=message, error=error, broker=active_broker
             )
         finally:
-            if self.context:
+            terminal_failure = True
+            requeue_message = None
+
+            if self.retry_policy:
+                cause = getattr(error, "__cause__", None) or error
+                cause_type = type(cause)
+                cause_name = cause_type.__name__
+
+                is_retryable = False
+                for r in self.retry_policy.retry_on:
+                    if isinstance(r, type) and issubclass(cause_type, Exception):
+                        if isinstance(cause, r):
+                            is_retryable = True
+                            break
+                    elif isinstance(r, str):
+                        if cause_name == r:
+                            is_retryable = True
+                            break
+
+                if is_retryable:
+                    current_retries = message.metadata.get("__retries_count", 0)
+                    max_retries = message.metadata.get(
+                        "__max_retries", self.retry_policy.max_retries
+                    )
+
+                    if current_retries < max_retries:
+                        terminal_failure = False
+                        requeue_message = message.fork()
+                        requeue_message.metadata["__retries_count"] = (
+                            current_retries + 1
+                        )
+            if self.context and terminal_failure:
                 artifact_id = message.metadata.get("artifact_id")
                 cache_key = message.metadata.get("cache_key")
                 if artifact_id:
@@ -245,8 +285,7 @@ class WorkflowRoutingPolicy(
                     )
 
             if active_broker:
-                # TODO: Determine requeue mechanism and control
-                active_broker.nack(message.id, requeue_message=None)
+                active_broker.nack(message.id, requeue_message=requeue_message)
 
     def on_done(self, message, envelope):
         self._stage_policy.on_done(message=message, envelope=envelope)

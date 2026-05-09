@@ -3,10 +3,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from tadween_core.broker import Message
-from tadween_core.exceptions import PolicyError, RoutingError
+from tadween_core.exceptions import HandlerError, PolicyError, RoutingError
 from tadween_core.stage.policy import InterceptionAction, InterceptionContext
 from tadween_core.task_queue.base import TaskEnvelope, TaskMetadata
-from tadween_core.workflow.router import WorkflowRoutingPolicy
+from tadween_core.workflow.router import RetryPolicy, WorkflowRoutingPolicy
 
 
 class TestWorkflowRoutingPolicy:
@@ -221,3 +221,83 @@ class TestWorkflowRoutingPolicy:
 
         router.on_running("t1", msg)
         inner_policy.on_running.assert_called_once_with(task_id="t1", message=msg)
+
+    def test_on_error_retry_mechanism(self):
+
+        inner_policy = MagicMock()
+        broker = MagicMock()
+        context = MagicMock()
+
+        router = WorkflowRoutingPolicy(
+            stage_policy=inner_policy,
+            output_topics=[],
+            broker=broker,
+            context=context,
+            retry_policy=RetryPolicy(retry_on={ValueError}, max_retries=2),
+        )
+        msg = Message(topic="in", metadata={"artifact_id": "art-1"})
+        err = ValueError("err")
+
+        router.on_error(msg, err)
+
+        # It should NOT be terminal failure, so artifact_progress should not be decremented
+        context.track_artifact_progress.assert_not_called()
+
+        # It should requeue a new forked message
+        broker.nack.assert_called_once()
+        nack_args, nack_kwargs = broker.nack.call_args
+        assert nack_args[0] == msg.id
+        requeued_msg = nack_kwargs["requeue_message"]
+        assert requeued_msg is not None
+        assert requeued_msg.id != msg.id
+        assert requeued_msg.metadata["__retries_count"] == 1
+
+        # Second retry
+        broker.reset_mock()
+        router.on_error(requeued_msg, err)
+        broker.nack.assert_called_once()
+        requeued_msg2 = broker.nack.call_args[1]["requeue_message"]
+        assert requeued_msg2.metadata["__retries_count"] == 2
+
+        # Third attempt (will exceed max_retries)
+        broker.reset_mock()
+        router.on_error(requeued_msg2, err)
+
+        # Now it is terminal, so artifact is tracked
+        context.track_artifact_progress.assert_called_once_with(
+            "art-1", -1, cache_key=None
+        )
+
+        # No requeue
+        broker.nack.assert_called_once()
+        assert broker.nack.call_args[1]["requeue_message"] is None
+
+    def test_on_error_retry_mechanism_string_match_and_cause(self):
+
+        inner_policy = MagicMock()
+        broker = MagicMock()
+        context = MagicMock()
+
+        router = WorkflowRoutingPolicy(
+            stage_policy=inner_policy,
+            output_topics=[],
+            broker=broker,
+            context=context,
+            retry_policy=RetryPolicy(retry_on={"CustomError"}),
+        )
+        msg = Message(topic="in", metadata={"artifact_id": "art-1"})
+
+        class CustomError(Exception):
+            pass
+
+        original_err = CustomError("failed")
+        handler_err = HandlerError("handler failed", stage_name="stage1")
+        handler_err.__cause__ = original_err
+
+        router.on_error(msg, handler_err)
+
+        context.track_artifact_progress.assert_not_called()
+        broker.nack.assert_called_once()
+        requeued_msg = broker.nack.call_args[1]["requeue_message"]
+        assert requeued_msg is not None
+        assert requeued_msg.metadata["__retries_count"] == 1

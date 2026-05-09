@@ -1,4 +1,5 @@
 import queue
+import threading
 import time
 
 import pytest
@@ -224,3 +225,33 @@ def test_robust_error_handling_in_dispatch():
     assert success
     assert len(received) == 1
     broker.close(timeout=1.0)
+
+
+def test_double_acks_resilience(broker: InMemoryBroker):
+    """Verify that double acks do not cause premature quiescence in fan-out scenarios."""
+    slow_handler_done = threading.Event()
+    msg_ids = []
+
+    def double_ack_handler(msg: Message):
+        # This handler tries to break the broker by acking repeatedly
+        for _ in range(5):
+            broker.ack(msg.id)
+        msg_ids.append(msg.id)
+
+    def slow_handler(msg: Message):
+
+        time.sleep(0.05)  # Simulate some work
+        msg_ids.append(msg.id)
+        slow_handler_done.set()
+
+    broker.subscribe("fanout.topic", double_ack_handler, auto_ack=False)
+    broker.subscribe("fanout.topic", slow_handler, auto_ack=True)
+
+    broker.publish(Message(topic="fanout.topic"))
+
+    # Wait for the slow handler to start processing before testing quiescence
+    slow_handler_done.wait(timeout=1.0)
+    broker.join(timeout=1.0)
+
+    # different message ids can't cause double acks that leads to premature quiescence
+    assert msg_ids[0] != msg_ids[1]

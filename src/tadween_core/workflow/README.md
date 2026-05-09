@@ -10,7 +10,7 @@ and wired to a broker during `build()`. After that, submitting a payload to the 
 point topic triggers the full pipeline automatically.
 
 Topology constraints enforced at link time:
-- No fan-in: a stage may have at most one parent.
+- No fan-in: a stage may have at most one parent. This is restricted explicitly because the routing layer currently lacks a built-in mechanism to distinguish between stream aggregation (waiting to join results from multiple parents before executing) and multiplexing (multiple parents feeding independent messages into a shared queue). For aggregation scenarios, consider leveraging `WorkflowContext` defer logic or artifact completion events.
 - No cycles: the graph must remain acyclic.
 
 ### WorkflowRoutingPolicy
