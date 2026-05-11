@@ -46,13 +46,13 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
 
         submit_message → [stage queue] → collector thread → _process_message → task queue → callback
 
-    * **Stage queue**: bounded internal buffer. When full, ``submit_message``
-        blocks until a slot frees up.  ``queue_size=0`` (default) = unbounded.
-    * **Collector thread**: daemon that drains the stage queue and feeds each
-        message through ``_process_message`` (the policy lifecycle).
-    * **Task registry**: maps ``message.id`` → ``task_id`` so callers can
+    - **Stage queue**: bounded internal buffer. When full, `submit_message`
+        blocks until a slot frees up.  `queue_size=0` (default) = unbounded.
+    - **Collector thread**: daemon that drains the stage queue and feeds each
+        message through `_process_message` (the policy lifecycle).
+    - **Task registry**: maps `message.id` → `task_id` so callers can
         correlate a submission ID with the underlying worker via
-        ``get_worker_task_id``.
+        `get_worker_task_id`.
     """
 
     def __init__(
@@ -95,6 +95,7 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
         self.task_queue = task_queue or init_queue(
             executor="thread",
             name=f"TaskQueue-{self.name}",
+            max_workers=4,
         )
 
         # Internal queueing and collector

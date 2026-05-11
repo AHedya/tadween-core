@@ -19,7 +19,11 @@ from tadween_core.repo.base import BaseArtifactRepo
 from tadween_core.stage.policy import DefaultStagePolicy, StagePolicy
 from tadween_core.stage.stage import Stage
 from tadween_core.task_queue.base_queue import BaseTaskQueue
-from tadween_core.workflow.router import WorkflowRoutingPolicy
+from tadween_core.workflow.router import (
+    RETRY_COUNT_ENTRY,
+    RetryPolicy,
+    WorkflowRoutingPolicy,
+)
 
 BucketSchemaT = TypeVar("BucketSchemaT", default=Any)
 
@@ -39,21 +43,30 @@ class Workflow:
         repo: BaseArtifactRepo | None = None,
         life_length: float | None = None,
         logger: Logger | None = None,
-        default_payload_extractor: Callable[[Any | None], dict] | None = None,
+        default_payload_extractor: Callable[[Any | None], dict | None] | None = None,
         resources: dict[str, float] | None = None,
         context: WorkflowContext | None = None,
     ):
         """
         Args:
-            name: Workflow identifier.
             broker: Singleton message broker instance.
+            name: Workflow identifier.
             cache: Singleton cache instance.
             repo: Singleton repository instance.
             life_length: Time in seconds before the workflow is forcibly killed.
                 None means infinite life.
+            logger: workflow logger.
+            default_payload_extractor: Workflow-wide default for how stages extract
+                payloads for the next stage.
+                Semantics:
+                    None -> Full Propagation (propagate original message payload).
+                    {}   -> Blocking Propagation (propagate empty dict).
+                    x    -> Result Propagation (propagate stage result as is).
+                    dict -> Custom/Selective Propagation (pluck specific fields).
             resources: Global resource pool (e.g. ``{"cuda": 1, "RAM_MB": 2048}``).
                 Stages declare *demands* against these resources; the manager
                 ensures no more than the configured capacity is allocated at once.
+            context: stages shared context. Used for logical backpressure, force deferral, or as a shared state.
         """
         self.broker = broker
         self.name = name or f"Workflow-{id(self):x}"
@@ -83,6 +96,7 @@ class Workflow:
         handler: BaseHandler[InputT, OutputT] | HandlerFactory,
         *,
         policy: StagePolicy | None = None,
+        retry_policy: RetryPolicy | None = None,
         cache: BaseCache | None = None,
         repo: BaseArtifactRepo | None = None,
         task_queue: BaseTaskQueue | None = None,
@@ -90,6 +104,7 @@ class Workflow:
         context_config: StageContextConfig | None = None,
         queue_size: int = 0,
         log_exc_info: bool = True,
+        payload_extractor: Callable[[Any | None], dict | None] | None = None,
     ) -> "Workflow":
         """
         Builds a Stage from components and integrates it into the workflow.
@@ -120,9 +135,17 @@ class Workflow:
             log_exc_info=log_exc_info,
         )
 
-        return self.integrate_stage(name, stage)
+        return self.integrate_stage(
+            name, stage, retry_policy=retry_policy, payload_extractor=payload_extractor
+        )
 
-    def integrate_stage(self, name: str, stage: Stage) -> "Workflow":
+    def integrate_stage(
+        self,
+        name: str,
+        stage: Stage,
+        retry_policy: RetryPolicy | None = None,
+        payload_extractor: Callable[[Any | None], dict | None] | None = None,
+    ) -> "Workflow":
         """
         Integrates a pre-built Stage object into the workflow.
 
@@ -147,8 +170,9 @@ class Workflow:
             output_topics=[],
             stage_name=name,
             repo=self.repo,
-            payload_extractor=self.payload_extractor,
+            payload_extractor=payload_extractor or self.payload_extractor,
             context=self.context,
+            retry_policy=retry_policy,
         )
 
         stage.policy = routing_policy
@@ -326,13 +350,15 @@ class Workflow:
     ):
         def handler(msg: Message, stage=stage):
             artifact_id = msg.metadata.get("artifact_id")
-            if is_entry_point and artifact_id and self.context:
+            is_retry = msg.metadata.get(RETRY_COUNT_ENTRY, 0) > 0
+            # check if message is a retry message. Retry messages shouldn't affect artifact progress.
+            if is_entry_point and not is_retry and artifact_id and self.context:
                 self.context.track_artifact_progress(artifact_id, 1)
 
             try:
                 stage.submit_message(msg)
             except Exception:
-                if is_entry_point and artifact_id and self.context:
+                if is_entry_point and not is_retry and artifact_id and self.context:
                     self.context.track_artifact_progress(artifact_id, -1)
                 raise
 

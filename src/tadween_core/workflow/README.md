@@ -19,6 +19,20 @@ transport layer. The user's policy handles domain concerns (persistence, caching
 logging). The routing policy handles infrastructure concerns (ack/nack, publishing
 to the next stage's topic). The two layers never need to know about each other.
 
+#### Payload Extraction & Propagation
+The `payload_extractor` is a callable that determines what data is passed from the current stage to the next stage(s) in the DAG. It is applied to the stage's result (or the interception payload).
+
+The return value of the extractor dictates the propagation behavior:
+
+| Return Value | Semantic | Description / Use Case |
+| :--- | :--- | :--- |
+| `None` | **Full Propagation** | Propagates the **original message payload** as-is. Useful for "streamline" stages where multiple sequential stages consume the exact same input data. |
+| `{}` | **Blocking Propagation** | Pass an **empty dictionary**. Recommended for **heavy outputs or fan-out** scenarios. This prevents overloading the broker and encourages downstream stages to fetch data from shared storage (Cache/Repo) using IDs from metadata. |
+| `x` (the input) | **Result Propagation** | Passes the **stage result** (the `OutputT`) as the next payload. Best for standard pipelines where Stage A's output is Stage B's input. |
+| `dict` | **Selective Propagation** | Returns a custom dictionary. Use this to **pluck specific fields** from a large result, excluding heavy data while still passing necessary context to the next stage. |
+
+You can set a workflow-wide default via `default_payload_extractor` and override it per-stage in `add_stage` or `integrate_stage`.
+
 ### Coord & Flow Control
 Tadween uses a dedicated `coord` layer for managing logical and physical backpressure. 
 
@@ -47,11 +61,13 @@ message arrives on broker topic
 3. normal Stage lifecycle: intercept, resolve_inputs, handler, on_done
 4. WorkflowRoutingPolicy.on_success:
     1. inner policy on_success   (domain: save, cache, metrics)
-    2. publish to output topics  (routing: forward to next stage)
-    3. broker.ack                (transport: mark message consumed)
+    2. extract payload
+    3. publish to output topics  (routing: forward to next stage)
+    4. broker.ack                (transport: mark message consumed)
 5. WorkflowRoutingPolicy.on_error:
-    1. inner policy on_error     (domain: log, alert)
-    2. broker.nack               (transport: reject message)
+    1. evaluate retry policies.
+    2. inner policy on_error (ONLY on terminal failure)
+    3. broker.nack (transport: reject message, optionally requeue if retrying)
 6. Task Completion:
     1. **Release Resources**: Returns units to `ResourceManager`.
     2. **Notify Events**: Triggers `notify_events` channels to wake up deferred stages.
@@ -62,6 +78,7 @@ message arrives on broker topic
     └── workflow
         ├── __init__.py
         ├── router.py   -> WorkflowRoutingPolicy. Wraps user policy with routing layer.
+        ├── retry.py    -> dataclass and constants used for retry mechanism
         ├── workflow.py -> Workflow. DAG builder, topology enforcement, lifecycle.
         └── README.md
 

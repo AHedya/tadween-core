@@ -5,12 +5,12 @@ import pytest
 from pydantic import BaseModel
 
 from tadween_core.broker import InMemoryBroker
+from tadween_core.coord.context import WorkflowContext
 from tadween_core.exceptions import ResourceError
 from tadween_core.handler.base import BaseHandler
 from tadween_core.stage.policy import DefaultStagePolicy
 from tadween_core.stage.stage import Stage
-from tadween_core.workflow.router import WorkflowRoutingPolicy
-from tadween_core.workflow.workflow import Workflow
+from tadween_core.workflow.workflow import RetryPolicy, Workflow, WorkflowRoutingPolicy
 
 
 class InputModel(BaseModel):
@@ -57,6 +57,20 @@ class TestWorkflowAddStage:
         workflow.add_stage("stage_a", handler=handler, policy=policy)
 
         assert "stage_a" in workflow._stages
+
+    def test_add_stage_with_retry_policy(self, workflow):
+        handler = SimpleHandler()
+        workflow.add_stage(
+            "stage_retry",
+            handler=handler,
+            retry_policy=RetryPolicy(retry_on={ValueError}, max_retries=5),
+        )
+
+        stage = workflow._stages["stage_retry"]
+        assert isinstance(stage.policy, WorkflowRoutingPolicy)
+        assert stage.policy.retry_policy is not None
+        assert stage.policy.retry_policy.max_retries == 5
+        assert ValueError in stage.policy.retry_policy.retry_on
 
 
 class TestWorkflowLink:
@@ -459,3 +473,90 @@ class TestWorkflowLifeLength:
         # Close immediately - should not raise errors even if A tries to send to B during B's shutdown
         workflow.close(timeout=5.0)
         assert True
+
+
+class FlakyInputModel(BaseModel):
+    artifact_id: str
+    value: int
+
+
+class FlakyOutputModel(BaseModel):
+    artifact_id: str
+    result: str
+
+
+class FlakyHandler(BaseHandler[FlakyInputModel, FlakyOutputModel]):
+    def __init__(self, fails_before_success: int):
+        self.fails_before_success = fails_before_success
+        self.attempts = 0
+
+    def run(self, inputs: FlakyInputModel) -> FlakyOutputModel:
+        self.attempts += 1
+        if self.attempts <= self.fails_before_success:
+            raise ValueError(f"Failed at attempt {self.attempts}")
+        return FlakyOutputModel(
+            artifact_id=inputs.artifact_id, result=f"success_{inputs.value}"
+        )
+
+
+class TestRetryMechanism:
+    def test_retry_happy_path(self, inmemory_broker):
+        context = WorkflowContext()
+        wf = Workflow(
+            broker=inmemory_broker,
+            context=context,
+            default_payload_extractor=lambda x: x,
+        )
+
+        # Needs 2 failures, succeeds on 3rd attempt
+        flaky_handler = FlakyHandler(fails_before_success=2)
+        wf.add_stage(
+            "flaky",
+            handler=flaky_handler,
+            retry_policy=RetryPolicy(retry_on={ValueError}, max_retries=3),
+        )
+        wf.set_entry_point("flaky")
+        wf.build()
+
+        artifact_id = "art-happy"
+        wf.submit(
+            FlakyInputModel(artifact_id=artifact_id, value=10),
+            metadata={"artifact_id": artifact_id},
+        )
+
+        wf._stages["flaky"].wait_all(timeout=5)
+        inmemory_broker.join(timeout=5)
+
+        assert flaky_handler.attempts == 3
+        assert context.state_get(f"_artifacts:{artifact_id}") == 0
+
+    def test_retry_terminal_failure(self, inmemory_broker):
+        context = WorkflowContext()
+        wf = Workflow(
+            broker=inmemory_broker,
+            context=context,
+            default_payload_extractor=lambda x: None,
+        )
+
+        # Needs 5 failures, succeeds on 6th attempt. But max_retries is 2.
+        # So it will terminally fail on 3rd attempt.
+        flaky_handler = FlakyHandler(fails_before_success=5)
+        wf.add_stage(
+            "flaky",
+            handler=flaky_handler,
+            retry_policy=RetryPolicy(retry_on={ValueError}, max_retries=2),
+        )
+        wf.set_entry_point("flaky")
+        wf.build()
+
+        artifact_id = "art-terminal"
+        wf.submit(
+            FlakyInputModel(artifact_id=artifact_id, value=20),
+            metadata={"artifact_id": artifact_id},
+        )
+
+        wf._stages["flaky"].wait_all(timeout=5)
+        inmemory_broker.join(timeout=5)
+
+        assert flaky_handler.attempts == 3
+        assert context.state_get(f"_artifacts:{artifact_id}") == 0

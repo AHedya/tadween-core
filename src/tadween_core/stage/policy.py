@@ -170,7 +170,11 @@ class StagePolicy(ABC, Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNa
         broker: BaseMessageBroker | None = None,
     ):
         """
-        Called when any failure occurs within the stage lifecycle.
+        This event has different effects based on where it's used:
+
+        - **standalone**: Called when any failure occurs within the stage lifecycle. You typically control everything yourself.
+        - :class:`Workflow` lifecycle: Called only on terminal business failures (i.e. *out of retries*, or *non-retirable errors*).
+        For transient errors caught by a RetryPolicy, this hook is NOT fired.
 
         The error type indicates the failure origin:
         - HandlerError:         task-level failure (handler.run raised). Consider it for requeue

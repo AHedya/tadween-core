@@ -65,9 +65,9 @@ nothing at all. The stage will not proceed.
 | `on_received(message)` | Message arrived at the stage. Always fires, before `intercept`. |
 | `on_queued(task_id, message)` | Task successfully enqueued. Only fires on normal workflow. |
 | `on_running(task_id, message)` | Task begins execution in the worker. |
-| `on_done(message, envelope)` | Task finished, regardless of outcome. |
+| `on_done(message, envelope)` | Task finished, regardless of outcome. suitable for logging and observability |
 | `on_success(task_id, message, result, ...)` | Handler completed successfully. Also called by the policy itself from inside `intercept` when short-circuiting with a result. |
-| `on_error(message, error, ...)` | Any failure in the stage lifecycle. The error type distinguishes origin: `HandlerError` for task-level failures, `InputValidationError` / `PolicyError` / `StageError` for stage-level failures. |
+| `on_error(message, error, ...)` | Any failure in the stage lifecycle if stage works in isolation. The error type distinguishes origin: `HandlerError` for task-level failures, `InputValidationError` / `PolicyError` / `StageError` for stage-level failures. Fired on **terminal failure** ***only*** if used in `workflow`. Not triggered for transient errors handled by retry mechanisms.|
 
 ### Lifecycle order
 ```

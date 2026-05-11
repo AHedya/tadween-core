@@ -6,7 +6,11 @@ from tadween_core.broker import Message
 from tadween_core.exceptions import HandlerError, PolicyError, RoutingError
 from tadween_core.stage.policy import InterceptionAction, InterceptionContext
 from tadween_core.task_queue.base import TaskEnvelope, TaskMetadata
-from tadween_core.workflow.router import RetryPolicy, WorkflowRoutingPolicy
+from tadween_core.workflow.router import (
+    RETRY_COUNT_ENTRY,
+    RetryPolicy,
+    WorkflowRoutingPolicy,
+)
 
 
 class TestWorkflowRoutingPolicy:
@@ -250,14 +254,14 @@ class TestWorkflowRoutingPolicy:
         requeued_msg = nack_kwargs["requeue_message"]
         assert requeued_msg is not None
         assert requeued_msg.id != msg.id
-        assert requeued_msg.metadata["__retries_count"] == 1
+        assert requeued_msg.metadata[RETRY_COUNT_ENTRY] == 1
 
         # Second retry
         broker.reset_mock()
         router.on_error(requeued_msg, err)
         broker.nack.assert_called_once()
         requeued_msg2 = broker.nack.call_args[1]["requeue_message"]
-        assert requeued_msg2.metadata["__retries_count"] == 2
+        assert requeued_msg2.metadata[RETRY_COUNT_ENTRY] == 2
 
         # Third attempt (will exceed max_retries)
         broker.reset_mock()
@@ -300,4 +304,4 @@ class TestWorkflowRoutingPolicy:
         broker.nack.assert_called_once()
         requeued_msg = broker.nack.call_args[1]["requeue_message"]
         assert requeued_msg is not None
-        assert requeued_msg.metadata["__retries_count"] == 1
+        assert requeued_msg.metadata[RETRY_COUNT_ENTRY] == 1

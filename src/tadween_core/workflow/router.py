@@ -1,6 +1,5 @@
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from tadween_core.broker import BaseMessageBroker
 from tadween_core.coord.context import WorkflowContext
@@ -16,11 +15,7 @@ from tadween_core.stage.policy import (
 )
 from tadween_core.task_queue.base import TaskEnvelope, TaskMetadata
 
-
-@dataclass(slots=True)
-class RetryPolicy:
-    retry_on: set[type[Exception] | str]
-    max_retries: int = 3
+from .retry import RETRY_COUNT_ENTRY, RETRY_MAX_ENTRY, RetryPolicy
 
 
 class WorkflowRoutingPolicy(
@@ -55,11 +50,11 @@ class WorkflowRoutingPolicy(
         self.context = context
         self.retry_policy = retry_policy
 
-        # Default: no payload passing
-        # If returns:
-        # None  -> propagate message payload
-        # {}    -> No payload passing
-        # This semantic is used in `Message.fork`.
+        # payload_extractor semantics:
+        # 1. lambda x: None  -> Full propagation (pass original message payload).
+        # 2. lambda x: {}    -> Blocking propagation (pass empty dict).
+        # 3. lambda x: x     -> Result propagation (pass stage result or context payload).
+        # 4. lambda x: {...} -> Custom propagation.
         self._payload_extractor = payload_extractor or (lambda x: {})
 
     def resolve_inputs(self, message, repo=None, cache=None):
@@ -241,10 +236,6 @@ class WorkflowRoutingPolicy(
     ):
         active_broker = self._broker or broker
         try:
-            self._stage_policy.on_error(
-                message=message, error=error, broker=active_broker
-            )
-        finally:
             terminal_failure = True
             requeue_message = None
 
@@ -265,17 +256,23 @@ class WorkflowRoutingPolicy(
                             break
 
                 if is_retryable:
-                    current_retries = message.metadata.get("__retries_count", 0)
+                    current_retries = message.metadata.get(RETRY_COUNT_ENTRY, 0)
                     max_retries = message.metadata.get(
-                        "__max_retries", self.retry_policy.max_retries
+                        RETRY_MAX_ENTRY, self.retry_policy.max_retries
                     )
 
                     if current_retries < max_retries:
                         terminal_failure = False
                         requeue_message = message.fork()
-                        requeue_message.metadata["__retries_count"] = (
+                        requeue_message.metadata[RETRY_COUNT_ENTRY] = (
                             current_retries + 1
                         )
+
+            if terminal_failure:
+                self._stage_policy.on_error(
+                    message=message, error=error, broker=active_broker
+                )
+        finally:
             if self.context and terminal_failure:
                 artifact_id = message.metadata.get("artifact_id")
                 cache_key = message.metadata.get("cache_key")
