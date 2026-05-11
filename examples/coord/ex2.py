@@ -67,10 +67,10 @@ def main():
     # It will block using 'wait_for' if the stash is full.
     ingestion_config = StageContextConfig(
         context=context,
-        defer_predicate=is_stash_full,
-        defer_event="stash_cleared",
-        defer_poll_interval=0.1,
-        defer_state_update=increment_stash,
+        predicate=is_stash_full,
+        event="stash_cleared",
+        poll_interval=0.1,
+        on_acquire=increment_stash,
     )
 
     wf.add_stage("ingestion", IngestionHandler(), context_config=ingestion_config)
@@ -79,8 +79,8 @@ def main():
     # It notifies the 'stash_cleared' channel when a task is finished.
     processing_config = StageContextConfig(
         context=context,
-        done_state_update=decrement_stash,
-        notify_events=["stash_cleared"],
+        on_release=decrement_stash,
+        notify_on_release=["stash_cleared"],
     )
 
     wf.add_stage("processing", ProcessingHandler(), context_config=processing_config)

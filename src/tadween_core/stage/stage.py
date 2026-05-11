@@ -263,16 +263,12 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
             if self.resource_manager and self.demands:
                 self.resource_manager.release(self.demands)
             if self.context_config.context:
-                if self.context_config.done_state_update:
-                    self.context_config.context.apply_state(
-                        self.context_config.done_state_update,
-                        metadata=message.metadata,
-                    )
-                if self.context_config.notify_events:
-                    self.context_config.context.notify(
-                        self.context_config.notify_events,
-                        n=self.context_config.n_notify,
-                    )
+                self.context_config.context.release(
+                    events=self.context_config.notify_on_release,
+                    on_release=self.context_config.on_release,
+                    metadata=message.metadata,
+                    n_notify=self.context_config.n_notify,
+                )
 
         message.metadata.update({"current_stage": self.name})
 
@@ -443,15 +439,15 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
 
                 # Logical Backpressure (Deferral)
                 logical_acquired = False
-                if self.context_config.defer_predicate and self.context_config.context:
+                if self.context_config.predicate and self.context_config.context:
                     try:
                         self.context_config.context.wait_for(
-                            event_name=self.context_config.defer_event,
-                            predicate=self.context_config.defer_predicate,
+                            predicate=self.context_config.predicate,
+                            event_name=self.context_config.event,
                             metadata=message.metadata,
-                            poll_interval=self.context_config.defer_poll_interval,
-                            timeout=self.context_config.defer_timeout,
-                            update_on_acquire=self.context_config.defer_state_update,
+                            poll_interval=self.context_config.poll_interval,
+                            timeout=self.context_config.timeout,
+                            on_acquire=self.context_config.on_acquire,
                         )
                         logical_acquired = True
                     except TimeoutError as e:
@@ -490,23 +486,21 @@ class Stage(Generic[InputT, OutputT, BucketSchemaT, ArtifactT, PartNameT]):
 
                         # Rollback logical state changes if any were applied during wait_for.
                         if logical_acquired and self.context_config.context:
-                            if self.context_config.rollback_state_update:
+                            if self.context_config.on_rollback:
                                 self.context_config.context.apply_state(
-                                    self.context_config.rollback_state_update,
+                                    self.context_config.on_rollback,
                                     metadata=message.metadata,
                                 )
-                            elif isinstance(
-                                self.context_config.defer_state_update, dict
-                            ):
+                            elif isinstance(self.context_config.on_acquire, dict):
                                 rollback = {
                                     k: -v
-                                    for k, v in self.context_config.defer_state_update.items()
+                                    for k, v in self.context_config.on_acquire.items()
                                 }
                                 self.context_config.context.apply_state(rollback)
                             else:
                                 self.logger.warning(
-                                    f"Stage {self.name}: Cannot automatically rollback callable defer_state_update. "
-                                    "Please provide rollback_state_update."
+                                    f"Stage {self.name}: Cannot automatically rollback callable on_acquire. "
+                                    "Please provide on_rollback."
                                 )
             except Exception as e:
                 self.logger.error(

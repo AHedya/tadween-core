@@ -160,7 +160,7 @@ class TestContextualHooks:
                 "test",
                 predicate,
                 metadata={"id": "art-123"},
-                update_on_acquire=hook,
+                on_acquire=hook,
             )
             event.set()
 
@@ -168,7 +168,7 @@ class TestContextualHooks:
         t = threading.Thread(target=worker, daemon=True)
         t.start()
 
-        event.wait(10)
+        event.wait(0.1)
         assert not ctx.state.get("hook_called")
 
         ctx.increment("ready")
@@ -203,12 +203,8 @@ class TestContextualHooks:
                 c.state["active_artifacts"].remove(m["id"])
 
         # Claim two slots
-        ctx.wait_for(
-            "ev", can_claim, metadata={"id": "A"}, update_on_acquire=claim_hook
-        )
-        ctx.wait_for(
-            "ev", can_claim, metadata={"id": "B"}, update_on_acquire=claim_hook
-        )
+        ctx.wait_for("ev", can_claim, metadata={"id": "A"}, on_acquire=claim_hook)
+        ctx.wait_for("ev", can_claim, metadata={"id": "B"}, on_acquire=claim_hook)
 
         assert ctx.state["active_artifacts"] == {"A", "B"}
 
@@ -216,9 +212,7 @@ class TestContextualHooks:
         results = []
 
         def waiter():
-            ctx.wait_for(
-                "ev", can_claim, metadata={"id": "C"}, update_on_acquire=claim_hook
-            )
+            ctx.wait_for("ev", can_claim, metadata={"id": "C"}, on_acquire=claim_hook)
             results.append("C-claimed")
 
         t = threading.Thread(target=waiter, daemon=True)

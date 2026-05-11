@@ -442,10 +442,10 @@ class TestStageCoordination:
             handler=SuccessHandler(),
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=lambda _ctx, _meta: True,
-                defer_timeout=0.1,
-                defer_poll_interval=0.1,
-                defer_state_update={"count": 1},
+                predicate=lambda _ctx, _meta: True,
+                timeout=0.1,
+                poll_interval=0.1,
+                on_acquire={"count": 1},
             ),
             policy=ErrorPolicy(),
         )
@@ -506,8 +506,8 @@ class TestStageCoordination:
             demands={"cuda": 1},
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=lambda _ctx, _meta: False,  # Pass immediately
-                defer_state_update={"count": 1},
+                predicate=lambda _ctx, _meta: False,  # Pass immediately
+                on_acquire={"count": 1},
             ),
         )
 
@@ -538,8 +538,8 @@ class TestStageCoordination:
             policy=ErrorPolicy(),
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=lambda _, __: False,
-                defer_state_update={"count": 1},
+                predicate=lambda _, __: False,
+                on_acquire={"count": 1},
             ),
         )
 
@@ -563,8 +563,8 @@ class TestStageCoordination:
             policy=ErrorPolicy(),
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=None,  # No predicate, so wait_for not called
-                defer_state_update={"count": 1},
+                predicate=None,  # No predicate, so wait_for not called
+                on_acquire={"count": 1},
             ),
         )
 
@@ -599,9 +599,9 @@ class TestStageCoordination:
             task_queue=CriticalFailureTaskQueue(),
             context_config=StageContextConfig(
                 context=ctx,
-                defer_predicate=lambda _, __: False,
-                defer_state_update={"count": 1},
-                done_state_update={"count": -1},
+                predicate=lambda _, __: False,
+                on_acquire={"count": 1},
+                on_release={"count": -1},
             ),
         )
 

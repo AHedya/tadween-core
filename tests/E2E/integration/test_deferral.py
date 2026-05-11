@@ -71,11 +71,11 @@ def test_workflow_deferral_backpressure():
             task_queue=init_queue(max_workers=5),
             policy=LoaderPolicy(),
             context_config=StageContextConfig(
-                defer_predicate=defer_predicate,
-                defer_event="cache_stash",
-                defer_timeout=5.0,
-                defer_poll_interval=1,
-                defer_state_update={"stash_depth": 1},
+                predicate=defer_predicate,
+                event="cache_stash",
+                timeout=5.0,
+                poll_interval=1,
+                on_acquire={"stash_depth": 1},
             ),
         )
 
@@ -86,9 +86,9 @@ def test_workflow_deferral_backpressure():
             task_queue=init_queue(max_workers=1),
             policy=ConsumerPolicy(),
             context_config=StageContextConfig(
-                notify_events=["cache_stash"],
+                notify_on_release=["cache_stash"],
                 n_notify=1,
-                done_state_update={"stash_depth": -1},
+                on_release={"stash_depth": -1},
             ),
         )
 

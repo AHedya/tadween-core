@@ -54,7 +54,7 @@ context.on_artifact_done(cleanup_resources)
 ### Pure Predicates & Atomic Transitions
 To avoid race conditions and side-effects during polling, predicates should be **pure functions**.
 - **The Predicate**: Should only read state. Signature: `(WorkflowContext, dict) -> bool`.
-- **The Transition**: State mutations should be defined via `update_on_acquire` (in `wait_for`) or `apply_state`. Signature: `(WorkflowContext, dict) -> None`. These are applied **atomically** while the internal lock is held.
+- **The Transition**: State mutations should be defined via `on_acquire` (in `wait_for`) or `apply_state`. Signature: `(WorkflowContext, dict) -> None`. These are applied **atomically** while the internal lock is held.
 
 ### Event Notification
 Notifications trigger registered callbacks.
@@ -65,13 +65,13 @@ Notifications trigger registered callbacks.
 In complex DAGs where an artifact (e.g., a large audio file) is used across multiple concurrent stages, simple global counters are insufficient. Contextual hooks allow tracking resource lifecycle by ID:
 
 ```python
-# can_claim <=> defer_predicate
+# can_claim <=> predicate
 def can_claim(ctx: WorkflowContext, meta: dict) -> bool:
     # Block if limit reached AND this specific ID isn't already claimed
     return (ctx.state_get("active_count") >= 5 
             and meta["id"] not in ctx.state.get("active_ids", set()))
 
-# claim_hook <=> update_on_acquire (the callable one)
+# claim_hook <=> on_acquire (the callable one)
 def claim_hook(ctx: WorkflowContext, meta: dict) -> None:
     active_ids = ctx.state.setdefault("active_ids", set())
     if meta["id"] not in active_ids:
@@ -80,8 +80,8 @@ def claim_hook(ctx: WorkflowContext, meta: dict) -> None:
 
 # Usage in StageContextConfig
 config = StageContextConfig(
-    defer_predicate=can_claim,
-    defer_state_update=claim_hook,
+    predicate=can_claim,
+    on_acquire=claim_hook,
     # ...
 )
 ```
