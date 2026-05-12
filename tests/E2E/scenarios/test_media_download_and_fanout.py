@@ -1,3 +1,9 @@
+"""
+Heavy Media Processing Pipeline
+Focus: Branching (Fan-out), Physical Backpressure (ResourceManager),
+and `on_artifact_done` and plus Workflow-level Retries.
+"""
+
 import threading
 import time
 import urllib.error
@@ -65,11 +71,6 @@ class FrameExtractorHandler(BaseHandler[VideoPayload, FrameOutput]):
 
 
 def test_heavy_media_pipeline(inmemory_broker):
-    """
-    Scenario 1: Heavy Media Processing Pipeline
-    Focus: Branching (Fan-out), Physical Backpressure (ResourceManager),
-    and EVENT_ARTIFACT_DONE (Implicit Fan-in), plus Workflow-level Retries.
-    """
     # 1. Physical Backpressure setup: Only 1 GPU available
     workflow = Workflow(
         broker=inmemory_broker,
