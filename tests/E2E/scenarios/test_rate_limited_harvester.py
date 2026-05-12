@@ -146,7 +146,7 @@ def test_sliding_window_rate_limiter_fails(inmemory_broker):
         "fetcher",
         handler=fetcher,
         context_config=StageContextConfig(
-            # Never defer. Use lambda to trigger acquire logic for registering the timestamp ASAP (on predicate broker)
+            # Never defer. Use lambda to trigger acquire logic for registering the timestamp ASAP (on predicate broken)
             # using `on_release` would work, but it runs on the task being done (releasing what's been claimed — logical slot).
             predicate=lambda *args: False,
             on_acquire=request_done,
