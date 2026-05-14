@@ -18,4 +18,4 @@
 ## Retry mechanism
 - [x] design
 - [x] implement
-- [ ] test
+- [x] test

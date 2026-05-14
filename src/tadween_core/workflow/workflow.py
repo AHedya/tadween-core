@@ -88,6 +88,7 @@ class Workflow:
             None  # (stage_name, external_topic)
         )
         self._is_built = False
+        self._is_closed = False
         self._timer: threading.Timer | None = None
 
     def add_stage(
@@ -400,6 +401,36 @@ class Workflow:
         self.broker.publish(msg)
         return msg.id
 
+    def wait_for_completion(
+        self,
+        timeout: float | None = None,
+    ):
+        """
+        Blocks until the broker reaches quiescence.
+        Optionally installs signal handlers to ensure graceful/forced shutdown.
+
+        Args:
+            timeout: Wall-clock budget (seconds) to wait for quiescence.
+        """
+
+        try:
+            if hasattr(self.broker, "join"):
+                self.broker.join(timeout=timeout)
+            else:
+                self.logger.warning(
+                    f"Broker {self.broker.__class__.__name__} does not support join(). "
+                    "wait_for_completion will return immediately."
+                )
+            self.close(force=False)
+
+        except (KeyboardInterrupt, SystemExit):
+            self.close(force=True)
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during execution: {e}", exc_info=True)
+            self.close(force=True)
+            raise
+
     def _kill_workflow(self, timeout: float | None = None):
         """
         Forcibly closes the workflow and its resources.
@@ -411,23 +442,39 @@ class Workflow:
 
     def close(self, timeout: float | None = None, force: bool = False):
         """Cleanup resources."""
+        if self._is_closed:
+            return
+        self._is_closed = True
+
         if self._timer:
             self._timer.cancel()
 
         self.logger.info(f"Closing workflow '{self.name}'...")
 
         if self.resource_manager and not self.resource_manager.is_shutdown:
-            self.resource_manager.shutdown()
+            try:
+                self.resource_manager.shutdown()
+            except Exception as e:
+                self.logger.error(f"Error shutting down resource manager: {e}")
 
         if self.context and not self.context.is_shutdown:
-            self.context.shutdown()
+            try:
+                self.context.shutdown()
+            except Exception as e:
+                self.logger.error(f"Error shutting down context: {e}")
 
         if hasattr(self.broker, "close"):
-            # If InMemoryBroker, it's fine. If shared RabbitMQ connection, be careful.
-            self.broker.close(timeout=timeout, force=force)
+            try:
+                # If InMemoryBroker, it's fine. If shared RabbitMQ connection, be careful.
+                self.broker.close(timeout=timeout, force=force)
+            except Exception as e:
+                self.logger.error(f"Error closing broker: {e}")
 
-        for stage in self._stages.values():
-            stage.close(force=force)
+        for stage_name, stage in self._stages.items():
+            try:
+                stage.close(force=force)
+            except Exception as e:
+                self.logger.error(f"Error closing stage '{stage_name}': {e}")
 
     def visualize(
         self,

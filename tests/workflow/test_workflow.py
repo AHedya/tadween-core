@@ -1,5 +1,6 @@
 import threading
 from queue import Queue
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -249,6 +250,81 @@ class TestWorkflowClose:
             assert workflow._timer is None or workflow._timer.is_alive() is False
         finally:
             workflow.close()
+
+
+class TestWorkflowWaitForCompletion:
+    def test_wait_for_completion_happy_path(self, inmemory_broker):
+        wf = Workflow(broker=inmemory_broker)
+        # Mock broker join to return immediately
+        original_join = inmemory_broker.join
+        inmemory_broker.join = MagicMock(return_value=True)
+
+        try:
+            wf.wait_for_completion()
+
+            assert inmemory_broker.join.called
+            assert wf._is_closed is True
+        finally:
+            inmemory_broker.join = original_join
+
+    def test_wait_for_completion_keyboard_interrupt(self, inmemory_broker):
+        wf = Workflow(broker=inmemory_broker)
+        original_join = inmemory_broker.join
+        inmemory_broker.join = MagicMock(side_effect=KeyboardInterrupt())
+
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                wf.wait_for_completion()
+
+            assert wf._is_closed is True
+        finally:
+            inmemory_broker.join = original_join
+
+    def test_wait_for_completion_system_exit(self, inmemory_broker):
+        wf = Workflow(broker=inmemory_broker)
+        original_join = inmemory_broker.join
+        inmemory_broker.join = MagicMock(side_effect=SystemExit(1))
+
+        try:
+            with pytest.raises(SystemExit):
+                wf.wait_for_completion()
+
+            assert wf._is_closed is True
+        finally:
+            inmemory_broker.join = original_join
+
+    def test_wait_for_completion_generic_exception(self, inmemory_broker):
+        wf = Workflow(broker=inmemory_broker)
+        original_join = inmemory_broker.join
+        inmemory_broker.join = MagicMock(side_effect=ValueError("Test Error"))
+
+        try:
+            with pytest.raises(ValueError, match="Test Error"):
+                wf.wait_for_completion()
+
+            assert wf._is_closed is True
+        finally:
+            inmemory_broker.join = original_join
+
+    def test_wait_for_completion_no_join_method(self):
+        # Mock broker without join method
+        mock_broker = MagicMock()
+        # Ensure it doesn't have 'join'
+        if hasattr(mock_broker, "join"):
+            del mock_broker.join
+
+        wf = Workflow(broker=mock_broker)
+        wf.wait_for_completion()
+
+        assert wf._is_closed is True
+
+    def test_close_is_idempotent(self, inmemory_broker):
+        wf = Workflow(broker=inmemory_broker)
+        wf.close()
+        assert wf._is_closed is True
+        # Calling again should not raise error
+        wf.close()
+        assert wf._is_closed is True
 
 
 class TestWorkflowTopologyInfo:
