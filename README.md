@@ -91,6 +91,10 @@ All three accept custom `console_formatter` and `file_formatter` for dependency 
 
 See [logger README](src/tadween_core/logger/README.md) for usage and configuration details.
 
+## Built with tadween-core
+
+- [**tadween-whisperx**](https://github.com/AHedya/tadween-whisperx): A production-ready ASR pipeline wrapper for WhisperX. It leverages `tadween-core` to orchestrate audio loading, diarization, transcription, and alignment as a highly-concurrent, stateful DAG with robust resource management.
+
 ## The Backstory
 <details>
 <summary>The story of tadween-core</summary>
